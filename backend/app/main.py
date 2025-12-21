@@ -1,9 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from models.schemas import GraphDTO, NodeDTO, EdgeDTO
+from app.models.schemas import GraphDTO, NodeDTO, EdgeDTO
+from app.parsers.gfa import parse_gfa
+from app.api.routes_graph import router as graphs_router
 
 
 app = FastAPI(title="Gordion")
+
+app.include_router(graphs_router)
 
 # Allow the frontend dev server to call the backend during development.
 # In production you will tighten this.
@@ -27,6 +31,7 @@ def graph_demo() -> GraphDTO:
         EdgeDTO(source="2", target="3"),
         EdgeDTO(source="3", target="1"),
     ]
+
     return GraphDTO(nodes=nodes, edges=edges)
 
 @app.get("/health")

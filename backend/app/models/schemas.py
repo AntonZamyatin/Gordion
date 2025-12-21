@@ -1,5 +1,8 @@
+# backend/app/models/schemas.py
+from __future__ import annotations
+
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional, List
 
 
 class NodeDTO(BaseModel):

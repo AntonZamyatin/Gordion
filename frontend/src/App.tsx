@@ -12,21 +12,24 @@ function GraphLoader() {
 
   useEffect(() => {
     (async () => {
-      const r = await fetch("http://localhost:8000/graph/demo");
-      const data: GraphDTO = await r.json();
+      // 1) ask backend to load example.gfa and create a session
+      const r1 = await fetch("http://localhost:8000/graphs/load-example", { method: "POST" });
+      const graphId = await r1.json();
+
+      // 2) fetch sigma-view DTO
+      const r2 = await fetch(`http://localhost:8000/graphs/${graphId}/view`);
+      const data: GraphDTO = await r2.json();
 
       const g = new Graph();
-
       for (const n of data.nodes) {
         g.addNode(n.id, {
           x: n.x,
           y: n.y,
-          size: n.size ?? 8,
+          size: n.size ?? 6,
           label: n.label ?? n.id,
         });
       }
       for (const e of data.edges) {
-        // graphology edge IDs must be unique if provided
         if (e.id) g.addEdgeWithKey(e.id, e.source, e.target);
         else g.addEdge(e.source, e.target);
       }
@@ -37,9 +40,7 @@ function GraphLoader() {
         sigma.refresh();
         sigma.getCamera().animatedReset();
       });
-    })().catch((err) => {
-      console.error("Failed to load graph:", err);
-    });
+    })().catch((err) => console.error(err));
   }, [loadGraph, sigma]);
 
   return null;
