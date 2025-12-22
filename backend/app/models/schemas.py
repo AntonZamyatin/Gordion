@@ -18,6 +18,8 @@ class EdgeDTO(BaseModel):
     source: str
     target: str
     id: Optional[str] = None
+    size: float = 1.0   # NEW
+
 
 
 class GraphDTO(BaseModel):

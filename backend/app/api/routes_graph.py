@@ -9,7 +9,9 @@ from app.services.session_store import SessionStore
 from app.services.layout_service import LayoutService
 from app.services.export_sigma import coregraph_to_sigma_dto
 from app.models.schemas import GraphDTO, ComponentsDTO, ComponentDTO, PositionUpdatesDTO, PositionResetDTO
-
+from app.render.render_builder import build_render_graph
+from app.render.render_policy import RenderPolicy
+from app.services.export_sigma_render import rendergraph_to_sigma_dto
 
 router = APIRouter(prefix="/graphs", tags=["graphs"])
 
@@ -68,16 +70,18 @@ def get_full_view(
         raise HTTPException(status_code=404, detail="Unknown graph_id")
 
     sess = STORE.get_session(sid)
-    g = sess.graph
+    
+    # 1) core -> render
+    policy = RenderPolicy(bp_per_spacer=100_000, k_max=10, k_min=0)
+    rg = build_render_graph(sess.graph, policy)
 
-    # compute packed positions (global coords)
-    computed = LAYOUT.compute_full_view_positions(graph=g, layout=layout, pack=pack)
+    # 2) layout render graph (two-level, components in render graph!)
+    computed = LAYOUT.compute_full_view_positions(graph=rg, layout=layout, pack=pack)
     sess.pos.computed = computed
-
-    # merge overrides on top
     final_pos = sess.pos.merged()
 
-    return coregraph_to_sigma_dto(g, positions=final_pos)
+    # 3) export render graph to sigma
+    return rendergraph_to_sigma_dto(rg, positions=final_pos)
 
 
 @router.get("/{graph_id}/component/{cid}/view", response_model=GraphDTO)

@@ -3,7 +3,7 @@ import Graph from "graphology";
 import { SigmaContainer, useLoadGraph, useSigma } from "@react-sigma/core";
 
 type NodeDTO = { id: string; x: number; y: number; label?: string; size?: number };
-type EdgeDTO = { id?: string; source: string; target: string };
+type EdgeDTO = { id?: string; source: string; target: string; size?: number };
 type GraphDTO = { nodes: NodeDTO[]; edges: EdgeDTO[] };
 
 function GraphLoader() {
@@ -30,9 +30,15 @@ function GraphLoader() {
         });
       }
       for (const e of data.edges) {
-        if (e.id) g.addEdgeWithKey(e.id, e.source, e.target);
-        else g.addEdge(e.source, e.target);
+        const attrs = {
+          size: e.size ?? 1,
+          // color: e.color ?? "#999", // optional if you add it on backend
+        };
+      
+        if (e.id) g.addEdgeWithKey(e.id, e.source, e.target, attrs);
+        else g.addEdge(e.source, e.target, attrs);
       }
+      
 
       loadGraph(g);
 

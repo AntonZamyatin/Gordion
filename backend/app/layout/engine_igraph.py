@@ -8,6 +8,10 @@ import igraph as ig
 from app.layout.engine_base import LayoutEngine, LayoutParams
 
 
+def _node_id(endpoint):
+    return endpoint[0] if isinstance(endpoint, tuple) else endpoint
+
+
 @dataclass
 class IGraphLayoutEngine(LayoutEngine):
     """
@@ -37,7 +41,7 @@ class IGraphLayoutEngine(LayoutEngine):
         # Build undirected edge list
         edges = set()
         for e in graph.edges.values():
-            u, v = e.start[0], e.end[0]
+            u, v = _node_id(e.start), _node_id(e.end)
             if u in idx and v in idx and u != v:
                 a, b = idx[u], idx[v]
                 if a > b:
@@ -46,13 +50,33 @@ class IGraphLayoutEngine(LayoutEngine):
 
         g = ig.Graph(n=n, edges=list(edges), directed=False)
 
-        # Build seed layout if provided
+        # Build seed layout if provided; otherwise None -> igraph random seed
         seed = None
         if seed_positions is not None:
-            seed = [
-                list(seed_positions.get(nid, (0.0, 0.0)))
-                for nid in ids
-            ]
+            seed = []
+            # deterministic fallback seed on a circle for missing nodes
+            import math
+            R = 10.0 * math.sqrt(n)
+            for i, nid in enumerate(ids):
+                if nid in seed_positions:
+                    x, y = seed_positions[nid]
+                else:
+                    ang = 2.0 * math.pi * (i / max(n, 1))
+                    x, y = R * math.cos(ang), R * math.sin(ang)
+                seed.append([float(x), float(y)])
+
+        if len(edges) == 0:
+            # No edges: deterministic placement
+            if seed is None:
+                # still return a deterministic circle
+                import math
+                R = 10.0 * math.sqrt(n)
+                return {
+                    nid: (R * math.cos(2.0 * math.pi * i / n), R * math.sin(2.0 * math.pi * i / n))
+                    for i, nid in enumerate(ids)
+                }
+            else:
+                return {nid: (seed[i][0], seed[i][1]) for i, nid in enumerate(ids)}
 
         # Run FR
         layout = g.layout_fruchterman_reingold(

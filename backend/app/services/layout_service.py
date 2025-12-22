@@ -10,6 +10,48 @@ from app.layout.engine_igraph import IGraphLayoutEngine
 from app.layout.pack_base import PackingEngine, PackParams, BBox
 from app.layout.pack_rows import RowPackingEngine
 
+def _endpoint_node_id(x) -> str:
+    # CoreGraph edges: endpoint is (node_id, port)
+    # RenderGraph edges: endpoint is node_id (str)
+    return x[0] if isinstance(x, tuple) else x
+
+
+def _connected_components(graph) -> dict[str, int]:
+    """
+    Generic connected components for any graph that has:
+      - graph.nodes: dict[node_id, ...]
+      - graph.edges: dict[edge_id, edge] where edge has .start and .end
+    Returns: node_id -> component_id
+    """
+    # Build undirected adjacency
+    adj: dict[str, set[str]] = {nid: set() for nid in graph.nodes.keys()}
+    for e in graph.edges.values():
+        u = _endpoint_node_id(e.start)
+        v = _endpoint_node_id(e.end)
+        if u == v:
+            continue
+        if u in adj and v in adj:
+            adj[u].add(v)
+            adj[v].add(u)
+
+    comp_of: dict[str, int] = {}
+    cid = 0
+    for nid in adj.keys():
+        if nid in comp_of:
+            continue
+        # BFS/DFS
+        stack = [nid]
+        comp_of[nid] = cid
+        while stack:
+            x = stack.pop()
+            for y in adj[x]:
+                if y not in comp_of:
+                    comp_of[y] = cid
+                    stack.append(y)
+        cid += 1
+
+    return comp_of
+
 
 def _bbox_of_positions(pos: dict[str, tuple[float, float]]) -> BBox:
     xs = [p[0] for p in pos.values()]
@@ -94,11 +136,10 @@ class LayoutService:
         if pack_params is None:
             pack_params = PackParams(name=pack, padding=80.0)
 
-        comps = graph.get_components()
+        node_to_cid = _connected_components(graph)
 
-        # Build node lists per component
         nodes_by_cid: dict[int, list[str]] = {}
-        for nid, cid in comps.node_to_cid.items():
+        for nid, cid in node_to_cid.items():
             nodes_by_cid.setdefault(cid, []).append(nid)
 
         # Step 1: local layout per component + bbox
@@ -140,7 +181,9 @@ class LayoutService:
         if layout_params is None:
             layout_params = LayoutParams(name=layout, seed=0)
 
-        node_ids = graph.nodes_in_component(cid)
+        node_to_cid = _connected_components(graph)
+        node_ids = [nid for nid, c in node_to_cid.items() if c == cid]
+
         local = layout_engine.layout_component(graph=graph, node_ids=node_ids, params=layout_params)
 
         if center and local:
