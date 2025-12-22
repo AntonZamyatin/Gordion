@@ -54,7 +54,7 @@ def list_components(graph_id: str) -> ComponentsDTO:
 @router.get("/{graph_id}/view", response_model=GraphDTO)
 def get_full_view(
     graph_id: str,
-    layout: str = "circle",
+    layout: str = "igraph_fr",
     pack: str = "rows",
 ) -> GraphDTO:
     """

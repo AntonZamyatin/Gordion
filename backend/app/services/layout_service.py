@@ -5,6 +5,7 @@ from typing import Iterable
 from app.domain.graph import CoreGraph
 from app.layout.engine_base import LayoutEngine, LayoutParams
 from app.layout.engine_circle import CircleLayoutEngine
+from app.layout.engine_igraph import IGraphLayoutEngine
 from app.layout.pack_base import PackingEngine, PackParams, BBox
 from app.layout.pack_rows import RowPackingEngine
 
@@ -35,6 +36,7 @@ class LayoutService:
         return LayoutService(
             layout_engines={
                 "circle": CircleLayoutEngine(),
+                "igraph_fr": IGraphLayoutEngine(),
                 # later: "sfdp": GraphvizSfdpEngine(...)
             },
             pack_engines={
@@ -47,7 +49,7 @@ class LayoutService:
         self,
         *,
         graph: CoreGraph,
-        layout: str = "circle",
+        layout: str = "igraph_fr",
         pack: str = "rows",
         layout_params: LayoutParams | None = None,
         pack_params: PackParams | None = None,
@@ -95,7 +97,7 @@ class LayoutService:
         *,
         graph: CoreGraph,
         cid: int,
-        layout: str = "circle",
+        layout: str = "igraph_fr",
         layout_params: LayoutParams | None = None,
         center: bool = True,
     ) -> dict[str, tuple[float, float]]:
