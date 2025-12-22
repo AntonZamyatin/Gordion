@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
+import math
 
 from app.domain.graph import CoreGraph
 from app.layout.engine_base import LayoutEngine, LayoutParams
@@ -17,6 +18,35 @@ def _bbox_of_positions(pos: dict[str, tuple[float, float]]) -> BBox:
         return BBox(0.0, 0.0, 0.0, 0.0)
     return BBox(min(xs), min(ys), max(xs), max(ys))
 
+def _normalize_component_scale(
+    pos: dict[str, tuple[float, float]],
+    *,
+    n: int,
+    target_extent_per_sqrt_n: float = 60.0,
+) -> dict[str, tuple[float, float]]:
+    """
+    Center positions and scale so that max(width, height) ~= target_extent_per_sqrt_n * sqrt(n).
+
+    This makes different engines (circle, FR, etc.) comparable for packing.
+    """
+    if not pos:
+        return pos
+
+    bb = _bbox_of_positions(pos)
+    w, h = bb.w, bb.h
+    maxdim = max(w, h)
+
+    # Center to origin (avoid drift)
+    cx = 0.5 * (bb.min_x + bb.max_x)
+    cy = 0.5 * (bb.min_y + bb.max_y)
+
+    if maxdim <= 1e-9:
+        return {nid: (0.0, 0.0) for nid in pos.keys()}
+
+    desired = target_extent_per_sqrt_n * math.sqrt(max(n, 1))
+    s = desired / maxdim
+
+    return {nid: ((x - cx) * s, (y - cy) * s) for nid, (x, y) in pos.items()}
 
 @dataclass
 class LayoutService:
@@ -77,6 +107,7 @@ class LayoutService:
 
         for cid, nids in nodes_by_cid.items():
             local = layout_engine.layout_component(graph=graph, node_ids=nids, params=layout_params)
+            local = _normalize_component_scale(local, n=len(nids), target_extent_per_sqrt_n=60.0)
             local_pos_by_cid[cid] = local
             bbox_by_cid[cid] = _bbox_of_positions(local)
 
