@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import List, Optional
 
 
+# -------- Sigma view DTOs --------
 class NodeDTO(BaseModel):
     id: str
     x: float
@@ -22,3 +23,30 @@ class EdgeDTO(BaseModel):
 class GraphDTO(BaseModel):
     nodes: List[NodeDTO]
     edges: List[EdgeDTO]
+
+
+# -------- Components DTOs --------
+class ComponentDTO(BaseModel):
+    cid: int
+    num_nodes: int
+    num_edges: int
+
+
+class ComponentsDTO(BaseModel):
+    components: List[ComponentDTO]
+
+
+# -------- Position update DTOs --------
+class PositionUpdateDTO(BaseModel):
+    id: str
+    x: float
+    y: float
+
+
+class PositionUpdatesDTO(BaseModel):
+    updates: List[PositionUpdateDTO]
+
+
+class PositionResetDTO(BaseModel):
+    # if None => reset all overrides
+    id: Optional[str] = None
