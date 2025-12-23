@@ -12,6 +12,7 @@ class NodeDTO(BaseModel):
     y: float
     label: Optional[str] = None
     size: float = 5.0
+    core_node_id: Optional[str] = None
 
 
 class EdgeDTO(BaseModel):
@@ -19,7 +20,9 @@ class EdgeDTO(BaseModel):
     target: str
     id: Optional[str] = None
     size: float = 1.0   # NEW
-
+    core_node_id: Optional[str] = None   # NEW (for internal edges)
+    core_edge_id: Optional[str] = None   # optional (for external edges later)
+    kind: Optional[str] = None           # INTERNAL/EXTERNAL (optional but handy)
 
 
 class GraphDTO(BaseModel):

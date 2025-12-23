@@ -8,13 +8,13 @@ class RenderPolicyConfig:
     # Pseudovertex expansion
     bp_per_spacer: int = 100_000
     k_min: int = 0
-    k_max: int = 10
+    k_max: int = 15
 
 
 @dataclass(frozen=True, slots=True)
 class VisualStyleConfig:
     # Sigma rendering attributes (backend emits these into DTOs)
-    endpoint_node_size: float = 4.0     # IN/OUT nodes
+    endpoint_node_size: float = 0.75     # IN/OUT nodes
     spacer_node_size: float = 4.0       # spacer nodes
     internal_edge_size: float = 8.0     # thick backbone “tube”
     external_edge_size: float = 1.5     # thin links
@@ -34,8 +34,8 @@ class LayoutConfig:
 
     # Weights for layout (not rendering stroke width)
     # Higher => stronger attraction for that edge in weighted layouts.
-    internal_edge_weight: float = 3.0
-    external_edge_weight: float = 1.0
+    internal_edge_weight: float = 1.0
+    external_edge_weight: float = 3.0
 
 
 @dataclass(frozen=True, slots=True)
