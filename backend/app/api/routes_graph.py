@@ -10,6 +10,7 @@ from app.services.layout_service import LayoutService
 from app.services.export_sigma import coregraph_to_sigma_dto
 from app.models.schemas import GraphDTO, ComponentsDTO, ComponentDTO, PositionUpdatesDTO, PositionResetDTO
 from app.render.render_builder import build_render_graph
+from app.config.viz_config import CFG
 from app.render.render_policy import RenderPolicy
 from app.services.export_sigma_render import rendergraph_to_sigma_dto
 
@@ -72,7 +73,13 @@ def get_full_view(
     sess = STORE.get_session(sid)
     
     # 1) core -> render
-    policy = RenderPolicy(bp_per_spacer=100_000, k_max=10, k_min=0)
+    policy = RenderPolicy(
+    bp_per_spacer=CFG.render.bp_per_spacer,
+    k_min=CFG.render.k_min,
+    k_max=CFG.render.k_max,
+    internal_edge_weight=CFG.layout.internal_edge_weight,
+    external_edge_weight=CFG.layout.external_edge_weight,)
+    
     rg = build_render_graph(sess.graph, policy)
 
     # 2) layout render graph (two-level, components in render graph!)

@@ -6,6 +6,7 @@ from typing import Iterable, Optional
 import igraph as ig
 
 from app.layout.engine_base import LayoutEngine, LayoutParams
+from app.config.viz_config import CFG
 
 
 def _node_id(endpoint):
@@ -38,17 +39,26 @@ class IGraphLayoutEngine(LayoutEngine):
 
         idx = {nid: i for i, nid in enumerate(ids)}
 
-        # Build undirected edge list
-        edges = set()
+        # Build undirected edge and weights lists
+        edges_list: list[tuple[int,int]] = []
+        weights: list[float] = []
+
         for e in graph.edges.values():
             u, v = _node_id(e.start), _node_id(e.end)
             if u in idx and v in idx and u != v:
                 a, b = idx[u], idx[v]
                 if a > b:
                     a, b = b, a
-                edges.add((a, b))
+                edges_list.append((a, b))
+                
+                kind = getattr(e, "kind", None)
+                
+                if kind == "INTERNAL":
+                    weights.append(CFG.layout.internal_edge_weight)
+                else:
+                    weights.append(CFG.layout.external_edge_weight)
 
-        g = ig.Graph(n=n, edges=list(edges), directed=False)
+        g = ig.Graph(n=n, edges=list(edges_list), directed=False)
 
         # Build seed layout if provided; otherwise None -> igraph random seed
         seed = None
@@ -65,7 +75,7 @@ class IGraphLayoutEngine(LayoutEngine):
                     x, y = R * math.cos(ang), R * math.sin(ang)
                 seed.append([float(x), float(y)])
 
-        if len(edges) == 0:
+        if len(edges_list) == 0:
             # No edges: deterministic placement
             if seed is None:
                 # still return a deterministic circle
@@ -80,9 +90,10 @@ class IGraphLayoutEngine(LayoutEngine):
 
         # Run FR
         layout = g.layout_fruchterman_reingold(
-            niter=300 if n < 2000 else 600,
+            niter=CFG.layout.fr_niter_small,
             seed=seed,
-            grid="auto",
+            grid=CFG.layout.fr_grid,
+            weights=weights,
         )
 
         return {
