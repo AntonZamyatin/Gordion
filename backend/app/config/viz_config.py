@@ -8,7 +8,7 @@ class RenderPolicyConfig:
     # Pseudovertex expansion
     bp_per_spacer: int = 100_000
     k_min: int = 0
-    k_max: int = 15
+    k_max: int = 10
 
 
 @dataclass(frozen=True, slots=True)
