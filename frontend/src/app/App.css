@@ -4,7 +4,7 @@
 :root {
   --topbar-h: 48px;
   --sidebar-w: 320px;
-  --sidebar-w-collapsed: 44px;
+  --sidebar-w-collapsed: 0px;
   --border: 1px solid rgb(108, 116, 119);
 }
 
@@ -94,10 +94,12 @@
   border: var(--border);
   background: transparent;
   cursor: pointer;
+  color: rgb(190, 189, 189);
 }
 
 .iconBtn:hover {
-  background: rgba(0,0,0,0.04);
+  background: rgb(108, 116, 119);
+  color: rgb(12, 12, 12);
 }
 
 /* Make Sigma fill the main cell */
