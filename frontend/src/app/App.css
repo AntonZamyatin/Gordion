@@ -1,0 +1,118 @@
+/* src/app/app.css */
+
+
+:root {
+  --topbar-h: 48px;
+  --sidebar-w: 320px;
+  --sidebar-w-collapsed: 44px;
+  --border: 1px solid rgb(108, 116, 119);
+}
+
+.appShell {
+  height: 100%;
+  width: 100%;
+  display: grid;
+
+  grid-template-rows: var(--topbar-h) 1fr;
+  grid-template-columns: auto 1fr auto;
+
+  grid-template-areas:
+    "top top top"
+    "left main right";
+
+  background: #252627;
+  color: #c7c9cf;
+}
+
+.topBar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border-bottom: var(--border);
+  user-select: none;
+}
+
+.leftBar {
+  grid-area: left;
+  border-right: var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rightBar {
+  grid-area: right;
+  border-left: var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.main {
+  grid-area: main;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Width control via data attributes on the shell */
+.appShell[data-left-collapsed="false"] .leftBar  { width: var(--sidebar-w); }
+.appShell[data-left-collapsed="true"]  .leftBar  { width: var(--sidebar-w-collapsed); }
+
+.appShell[data-right-collapsed="false"] .rightBar { width: var(--sidebar-w); }
+.appShell[data-right-collapsed="true"]  .rightBar { width: var(--sidebar-w-collapsed); }
+
+/* Sidebar inner content */
+.sidebarHeader {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: var(--border);
+}
+
+.sidebarBody {
+  padding: 10px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Small icon button used for collapse */
+.iconBtn {
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: var(--border);
+  background: transparent;
+  cursor: pointer;
+}
+
+.iconBtn:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+/* Make Sigma fill the main cell */
+.main .react-sigma,
+.main .sigma-container {
+  width: 100%;
+  height: 100%;
+}
+
+/* Ensure Sigma container is a positioning context for its canvases */
+.main .sigma-container {
+  position: relative;
+}
+
+
+/* Optional: when collapsed, hide body content but keep header/collapse button */
+.appShell[data-left-collapsed="true"] .leftBar .sidebarBody { display: none; }
+.appShell[data-right-collapsed="true"] .rightBar .sidebarBody { display: none; }
