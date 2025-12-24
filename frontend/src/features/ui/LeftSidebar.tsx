@@ -1,17 +1,13 @@
 // src/features/ui/LeftSidebar.tsx
 type Props = {
     collapsed: boolean;
-    onToggle(): void;
   };
   
-  export function LeftSidebar({ collapsed, onToggle }: Props) {
+  export function LeftSidebar({ collapsed }: Props) {
     return (
       <aside className="leftBar">
         <div className="sidebarHeader">
           <div style={{ fontWeight: 600 }}>{collapsed ? "Params" : "Visualization params"}</div>
-          <button className="iconBtn" onClick={onToggle} title="Collapse">
-            {collapsed ? ">" : "<"}
-          </button>
         </div>
   
         <div className="sidebarBody">

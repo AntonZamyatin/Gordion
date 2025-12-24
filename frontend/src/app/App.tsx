@@ -1,6 +1,7 @@
 // src/app/App.tsx
 import { useState } from "react";
 import "./app.css";
+import { dbg } from "../debug.ts";
 
 import { TopBar } from "../features/ui/TopBar";
 import { LeftSidebar } from "../features/ui/LeftSidebar";
@@ -11,6 +12,17 @@ export default function App() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
 
+  const onToggleLeft = () => {
+    dbg("UI toggle LEFT (before)", { leftCollapsed });
+    setLeftCollapsed(v => {
+      dbg("UI toggle LEFT (state updater)", { prev: v, next: !v });
+      return !v;
+    });
+  };
+
+  dbg("App render", { leftCollapsed, rightCollapsed });
+
+  
   return (
     <div
       className="appShell"
@@ -24,13 +36,13 @@ export default function App() {
         onToggleRight={() => setRightCollapsed((v) => !v)}
       />
 
-      <LeftSidebar collapsed={leftCollapsed} onToggle={() => setLeftCollapsed((v) => !v)} />
+      <LeftSidebar collapsed={leftCollapsed} />
 
       <main className="main">
         <GraphCanvas />
       </main>
 
-      <RightSidebar collapsed={rightCollapsed} onToggle={() => setRightCollapsed((v) => !v)} />
+      <RightSidebar collapsed={rightCollapsed} />
     </div>
   );
 }
