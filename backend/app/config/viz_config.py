@@ -6,9 +6,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class RenderPolicyConfig:
     # Pseudovertex expansion
-    bp_per_spacer: int = 100_000
+    bp_per_spacer: int = 50_000
     k_min: int = 0
-    k_max: int = 10
+    k_max: int = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,13 +30,15 @@ class LayoutConfig:
     fr_niter_small: int = 300
     fr_niter_large: int = 600
     fr_large_threshold: int = 2000
-    fr_grid: str = "auto"
+    fr_grid: str = "nogrid"
 
     # Weights for layout (not rendering stroke width)
     # Higher => stronger attraction for that edge in weighted layouts.
-    internal_edge_weight: float = 1.0
-    external_edge_weight: float = 3.0
+    internal_edge_weight: float = 6.0
+    external_edge_weight: float = 0.5
 
+    seed_x_step: float = 30.0
+    seed_y_step: float = 30.0
 
 @dataclass(frozen=True, slots=True)
 class PackingConfig:
@@ -48,7 +50,7 @@ class PackingConfig:
 @dataclass(frozen=True, slots=True)
 class NormalizationConfig:
     # Per-component normalization extent ~ target_extent_per_sqrt_n * sqrt(n)
-    target_extent_per_sqrt_n: float = 60.0
+    baseExtent: float = 600.0
 
 
 @dataclass(frozen=True, slots=True)

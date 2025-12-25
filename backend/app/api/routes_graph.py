@@ -19,7 +19,7 @@ router = APIRouter(prefix="/graphs", tags=["graphs"])
 STORE = SessionStore()
 LAYOUT = LayoutService.default()
 
-EXAMPLE_GFA_PATH = Path(__file__).resolve().parents[2] / "data" / "example2.gfa"
+EXAMPLE_GFA_PATH = Path(__file__).resolve().parents[2] / "data" / "example.gfa"
 
 def _uuid_or_400(graph_id: str) -> UUID:
     try:
