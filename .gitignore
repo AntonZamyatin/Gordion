@@ -22,3 +22,15 @@ frontend/.vite/
 # OS
 .DS_Store
 Thumbs.db
+
+# Editors
+.vscode/
+
+# Large data & debug artifacts (kept out of git)
+backend/data/
+backend/svg/
+
+# ChatGPT conversation exports (local context only)
+/chat1.json
+/chat2.json
+/chat3.json

@@ -7,6 +7,7 @@ from app.domain.graph import CoreGraph
 from app.layout.engine_base import LayoutEngine, LayoutParams
 from app.layout.engine_circle import CircleLayoutEngine
 from app.layout.engine_igraph import IGraphLayoutEngine
+from app.layout.engine_sfdp import SfdpLayoutEngine
 from app.layout.pack_base import PackingEngine, PackParams, BBox
 from app.layout.pack_rows import RowPackingEngine
 
@@ -109,7 +110,7 @@ class LayoutService:
             layout_engines={
                 "circle": CircleLayoutEngine(),
                 "igraph_fr": IGraphLayoutEngine(),
-                # later: "sfdp": GraphvizSfdpEngine(...)
+                "graphtool_sfdp": SfdpLayoutEngine(),
             },
             pack_engines={
                 "rows": RowPackingEngine(),
@@ -121,7 +122,7 @@ class LayoutService:
         self,
         *,
         graph: CoreGraph,
-        layout: str = "igraph_fr",
+        layout: str = "graphtool_sfdp",
         pack: str = "rows",
         layout_params: LayoutParams | None = None,
         pack_params: PackParams | None = None,

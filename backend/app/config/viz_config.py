@@ -6,9 +6,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class RenderPolicyConfig:
     # Pseudovertex expansion
-    bp_per_spacer: int = 50_000
+    bp_per_spacer: int = 100_000
     k_min: int = 0
-    k_max: int = 30
+    k_max: int = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +23,7 @@ class VisualStyleConfig:
 @dataclass(frozen=True, slots=True)
 class LayoutConfig:
     # Layout engine selection & params
-    default_engine: str = "igraph_fr"
+    default_engine: str = "graphtool_sfd"
     default_pack: str = "rows"
 
     # FR parameters
@@ -37,7 +37,7 @@ class LayoutConfig:
     internal_edge_weight: float = 6.0
     external_edge_weight: float = 0.5
 
-    seed_x_step: float = 30.0
+    seed_x_step: float = 200.0
     seed_y_step: float = 30.0
 
 @dataclass(frozen=True, slots=True)
