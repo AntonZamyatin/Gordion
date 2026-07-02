@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>deck.gl ribbons spike</title>
+    <style>
+      html, body, #app { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0e14; }
+      #hud {
+        position: absolute; top: 8px; left: 8px; z-index: 10;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #d7dae0; background: rgba(11,14,20,0.75);
+        padding: 8px 10px; border: 1px solid #2a2f3a; border-radius: 6px;
+        pointer-events: none; white-space: pre;
+      }
+      #hud b { color: #ffd000; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">loading…</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
