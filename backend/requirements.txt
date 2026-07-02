@@ -7,7 +7,9 @@ h11==0.16.0
 httptools==0.8.0
 idna==3.18
 iniconfig==2.3.0
-numpy==2.5.0
+llvmlite==0.48.0
+numba==0.66.0
+numpy==2.4.6
 packaging==26.2
 pluggy==1.6.0
 pydantic==2.13.4

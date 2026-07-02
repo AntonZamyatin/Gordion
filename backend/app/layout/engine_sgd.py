@@ -12,8 +12,9 @@ Design:
 - Stress terms come from all edges (local structure + bp-scaled lengths) plus a
   sparse set of pivot->all-nodes terms (global structure) so we avoid O(n^2).
 
-The inner SGD loop is a plain Python loop for now (fine at spike scale); Phase 4
-vectorizes / JITs it for 10^5-10^6.
+The hot inner SGD pass is JIT-compiled with numba (_sgd_iteration); the term
+shuffle stays on the numpy Generator so results are identical to the plain
+Python solver, seed for seed.
 """
 from __future__ import annotations
 
@@ -22,19 +23,17 @@ import heapq
 import math
 
 import numpy as np
+from numba import njit
 
 from app.layout.port_graph import PortGraph
 
 
 @dataclass(slots=True, frozen=True)
 class SgdParams:
-    iterations: int = 60
-    # Sparse pivot->all stress terms add global spreading, but with the
-    # vectorized degree-averaged solver they dilute the alignment of high-degree
-    # pivot nodes and leave "spike" artifacts. For chain-like assembly graphs the
-    # diameter-backbone seed already supplies global structure, so pivots default
-    # off (edge-only stress); raise n_pivots for non-linear graphs if needed.
-    n_pivots: int = 0
+    iterations: int = 30
+    # Sparse pivot->all stress terms give the 2D "Bandage" spread (global
+    # structure). Keep them on.
+    n_pivots: int = 50
     seed: int = 0
     component_pad: float = 3.0
 
@@ -166,8 +165,47 @@ def _linear_seed(
 
 
 # ---------------------------------------------------------------------------
-# SGD
+# SGD (sequential, annealed) — this is the solver whose 2D "Bandage" character
+# was signed off. Do not swap it for a fully-converged stress solver (SMACOF):
+# converging harder straightens chain-like graphs into a line, which is exactly
+# the look we do NOT want. The under-converged annealed SGD keeps the open-loop
+# 2D spread.
 # ---------------------------------------------------------------------------
+@njit(cache=True)
+def _sgd_iteration(
+    pos: np.ndarray,
+    I: np.ndarray,
+    J: np.ndarray,
+    D: np.ndarray,
+    W: np.ndarray,
+    order: np.ndarray,
+    eta: float,
+) -> None:
+    """One SGD pass over the stress terms in `order` (JIT-compiled)."""
+    for idx in range(order.shape[0]):
+        k = order[idx]
+        i = I[k]
+        j = J[k]
+        d = D[k]
+        mu = W[k] * eta
+        if mu > 1.0:
+            mu = 1.0
+        dx = pos[i, 0] - pos[j, 0]
+        dy = pos[i, 1] - pos[j, 1]
+        mag = math.sqrt(dx * dx + dy * dy)
+        if mag < 1e-9:
+            dx = 1e-6
+            dy = 0.0
+            mag = 1e-6
+        r = 0.5 * mu * (mag - d) / mag
+        rx = r * dx
+        ry = r * dy
+        pos[i, 0] -= rx
+        pos[i, 1] -= ry
+        pos[j, 0] += rx
+        pos[j, 1] += ry
+
+
 def _run_sgd(
     pos: np.ndarray,
     I: np.ndarray,
@@ -176,20 +214,14 @@ def _run_sgd(
     W: np.ndarray,
     *,
     iterations: int,
+    rng: np.random.Generator,
 ) -> None:
-    """Vectorized stress minimization: degree-averaged Jacobi steps (numpy).
-
-    Each iteration computes, for every stress term, the SGD displacement of its
-    two endpoints against the current positions, then moves each node by the
-    *average* of the displacements it participates in. Averaging (rather than
-    summing) means high-degree nodes -- notably the pivots, which link to every
-    other node -- can't overshoot, so the layout stays stable while running fully
-    vectorized (~2 orders of magnitude faster than the sequential loop).
-    """
+    # The per-iteration term order is still shuffled with the numpy Generator
+    # (so results are identical to the pure-Python solver, seed for seed); only
+    # the hot inner pass is JIT-compiled.
     T = len(I)
     if T == 0:
         return
-    n = len(pos)
     w_min = float(W.min())
     w_max = float(W.max())
     eta_max = 1.0 / w_min
@@ -200,24 +232,10 @@ def _run_sgd(
     else:
         etas = np.array([eta_max])
 
-    disp = np.zeros_like(pos)
-    cnt = np.zeros(n)
+    order = np.arange(T)
     for it in range(iterations):
-        eta = float(etas[it])
-        dxy = pos[I] - pos[J]                    # (T, 2)
-        mag = np.sqrt((dxy * dxy).sum(axis=1))   # (T,)
-        np.maximum(mag, 1e-9, out=mag)
-        mu = np.minimum(W * eta, 1.0)            # (T,)
-        r = (0.5 * mu * (mag - D) / mag)[:, None] * dxy  # (T, 2)
-
-        disp[:] = 0.0
-        cnt[:] = 0.0
-        np.add.at(disp, I, -r)
-        np.add.at(disp, J, r)
-        np.add.at(cnt, I, 1.0)
-        np.add.at(cnt, J, 1.0)
-        nz = cnt > 0
-        pos[nz] += disp[nz] / cnt[nz][:, None]
+        rng.shuffle(order)
+        _sgd_iteration(pos, I, J, D, W, order, float(etas[it]))
 
 
 def _layout_component(
@@ -300,6 +318,7 @@ def _layout_component(
         np.asarray(td, dtype=float),
         np.asarray(tw, dtype=float),
         iterations=p.iterations,
+        rng=rng,
     )
     return pos
 
