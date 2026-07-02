@@ -42,8 +42,8 @@ def main() -> None:
         type=Path,
         default=REPO / "spikes" / "deckgl-ribbons" / "public" / "scene.json",
     )
-    ap.add_argument("--iterations", type=int, default=30)
-    ap.add_argument("--pivots", type=int, default=50)
+    ap.add_argument("--iterations", type=int, default=60)
+    ap.add_argument("--pivots", type=int, default=0)
     ap.add_argument("--length-scale", type=float, default=0.6)
     args = ap.parse_args()
 

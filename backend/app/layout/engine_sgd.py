@@ -28,8 +28,13 @@ from app.layout.port_graph import PortGraph
 
 @dataclass(slots=True, frozen=True)
 class SgdParams:
-    iterations: int = 30
-    n_pivots: int = 50
+    iterations: int = 60
+    # Sparse pivot->all stress terms add global spreading, but with the
+    # vectorized degree-averaged solver they dilute the alignment of high-degree
+    # pivot nodes and leave "spike" artifacts. For chain-like assembly graphs the
+    # diameter-backbone seed already supplies global structure, so pivots default
+    # off (edge-only stress); raise n_pivots for non-linear graphs if needed.
+    n_pivots: int = 0
     seed: int = 0
     component_pad: float = 3.0
 
@@ -171,10 +176,20 @@ def _run_sgd(
     W: np.ndarray,
     *,
     iterations: int,
-    rng: np.random.Generator,
 ) -> None:
-    if len(I) == 0:
+    """Vectorized stress minimization: degree-averaged Jacobi steps (numpy).
+
+    Each iteration computes, for every stress term, the SGD displacement of its
+    two endpoints against the current positions, then moves each node by the
+    *average* of the displacements it participates in. Averaging (rather than
+    summing) means high-degree nodes -- notably the pivots, which link to every
+    other node -- can't overshoot, so the layout stays stable while running fully
+    vectorized (~2 orders of magnitude faster than the sequential loop).
+    """
+    T = len(I)
+    if T == 0:
         return
+    n = len(pos)
     w_min = float(W.min())
     w_max = float(W.max())
     eta_max = 1.0 / w_min
@@ -185,31 +200,24 @@ def _run_sgd(
     else:
         etas = np.array([eta_max])
 
-    order = np.arange(len(I))
-    Il, Jl, Dl, Wl = I.tolist(), J.tolist(), D.tolist(), W.tolist()
-    px = pos  # alias
+    disp = np.zeros_like(pos)
+    cnt = np.zeros(n)
     for it in range(iterations):
-        eta = etas[it]
-        rng.shuffle(order)
-        for k in order.tolist():
-            i = Il[k]
-            j = Jl[k]
-            d = Dl[k]
-            mu = Wl[k] * eta
-            if mu > 1.0:
-                mu = 1.0
-            dx = px[i, 0] - px[j, 0]
-            dy = px[i, 1] - px[j, 1]
-            mag = math.sqrt(dx * dx + dy * dy)
-            if mag < 1e-9:
-                dx, dy, mag = 1e-6, 0.0, 1e-6
-            r = 0.5 * mu * (mag - d) / mag
-            rx = r * dx
-            ry = r * dy
-            px[i, 0] -= rx
-            px[i, 1] -= ry
-            px[j, 0] += rx
-            px[j, 1] += ry
+        eta = float(etas[it])
+        dxy = pos[I] - pos[J]                    # (T, 2)
+        mag = np.sqrt((dxy * dxy).sum(axis=1))   # (T,)
+        np.maximum(mag, 1e-9, out=mag)
+        mu = np.minimum(W * eta, 1.0)            # (T,)
+        r = (0.5 * mu * (mag - D) / mag)[:, None] * dxy  # (T, 2)
+
+        disp[:] = 0.0
+        cnt[:] = 0.0
+        np.add.at(disp, I, -r)
+        np.add.at(disp, J, r)
+        np.add.at(cnt, I, 1.0)
+        np.add.at(cnt, J, 1.0)
+        nz = cnt > 0
+        pos[nz] += disp[nz] / cnt[nz][:, None]
 
 
 def _layout_component(
@@ -292,7 +300,6 @@ def _layout_component(
         np.asarray(td, dtype=float),
         np.asarray(tw, dtype=float),
         iterations=p.iterations,
-        rng=rng,
     )
     return pos
 

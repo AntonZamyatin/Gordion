@@ -1,7 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.models.schemas import GraphDTO, NodeDTO, EdgeDTO
-from app.parsers.gfa import parse_gfa
 from app.api.routes_graph import router as graphs_router
 from app.api.routes_scene import router as scene_router
 

@@ -1,17 +1,29 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
+
 from app.domain.graph import CoreGraph
+from app.layout.port_graph import PortGraph
 
 
 @dataclass
-class PositionStore:
-    # Most recently computed full-view positions (packed global coords)
+class GraphSession:
+    """An in-memory graph session: the topology plus its cached layout.
+
+    Positions are keyed by *port node id* (e.g. "s1:IN"). `computed` holds the
+    most recent SGD layout; `overrides` holds any user-set positions layered on
+    top (dragging, later phases).
+    """
+
+    id: UUID
+    graph: CoreGraph
+    source: str = "graph"
+    port_graph: PortGraph | None = None
     computed: dict[str, tuple[float, float]] = field(default_factory=dict)
-    # User overrides (dragged positions)
     overrides: dict[str, tuple[float, float]] = field(default_factory=dict)
 
-    def merged(self) -> dict[str, tuple[float, float]]:
+    def merged_positions(self) -> dict[str, tuple[float, float]]:
         out = dict(self.computed)
         out.update(self.overrides)
         return out
@@ -26,27 +38,17 @@ class PositionStore:
         self.overrides.clear()
 
 
-@dataclass
-class GraphSession:
-    id: UUID
-    graph: CoreGraph
-    pos: PositionStore = field(default_factory=PositionStore)
-
-
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[UUID, GraphSession] = {}
 
-    def create(self, graph: CoreGraph) -> UUID:
+    def create(self, graph: CoreGraph, source: str = "graph") -> UUID:
         sid = uuid4()
-        self._sessions[sid] = GraphSession(id=sid, graph=graph)
+        self._sessions[sid] = GraphSession(id=sid, graph=graph, source=source)
         return sid
 
-    def get_session(self, sid: UUID) -> GraphSession:
+    def get(self, sid: UUID) -> GraphSession:
         return self._sessions[sid]
-
-    def get_graph(self, sid: UUID) -> CoreGraph:
-        return self._sessions[sid].graph
 
     def has(self, sid: UUID) -> bool:
         return sid in self._sessions

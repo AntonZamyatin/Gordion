@@ -6,8 +6,7 @@ dependencies = [
   "fastapi",
   "uvicorn[standard]",
   "pydantic",
-  "python-igraph",  # required by the current igraph layout engine (slated for removal in the deck.gl migration)
-  "numpy",          # SGD layout engine
+  "numpy",  # SGD layout engine
 ]
 
 [project.optional-dependencies]
