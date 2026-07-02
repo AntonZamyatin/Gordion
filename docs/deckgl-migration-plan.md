@@ -1,6 +1,6 @@
 # Gordion — deck.gl Migration Plan
 
-Status: proposed
+Status: completed (2026-07-02) — all phases done; layout uses sequential annealed 2D SGD (numba-JIT'd), not the vectorized/SMACOF variants explored mid-migration.
 Author: design session, 2026-07-01
 Scope: re-platform the **layout + rendering pipeline** around scale and true ribbon rendering. The backend domain architecture (CoreGraph, layering, PositionStore, config) is kept.
 
