@@ -4,8 +4,14 @@ version = "0.0.1"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi",
-  "uvicorn",
+  "uvicorn[standard]",
   "pydantic",
+  "python-igraph",  # required by the current igraph layout engine (slated for removal in the deck.gl migration)
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
 ]
 
 [tool.pytest.ini_options]

@@ -6,6 +6,13 @@ from typing import Iterable, Literal, Tuple, Optional, Dict, Set, List
 from collections import deque
 
 from app.domain.patch import Patch
+from app.domain.errors import (
+    NodeExists,
+    NodeNotFound,
+    EdgeExists,
+    EdgeNotFound,
+    InvalidEdgeEndpoint,
+)
 
 # -----------------------------
 # Types: ports and endpoints
