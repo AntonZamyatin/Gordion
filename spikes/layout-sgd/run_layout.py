@@ -1,8 +1,10 @@
 #!/usr/bin/env python
-"""Phase 2 spike driver: GFA -> port graph -> 2D SGD -> PNG + scene JSON.
+"""Phase 2/3 spike driver: GFA -> port graph -> 2D SGD -> Scene -> PNG + JSON.
 
-Renders a matplotlib PNG (for quick eyeballing of layout quality) and writes a
-scene JSON that the deck.gl spike can load with ?scene=/scene.json.
+Builds the same Scene the /scene endpoint serves (via app.services.ribbon), then
+renders a matplotlib PNG for quick eyeballing and writes a JSON scene for the
+deck.gl spike's ?scene= mode. The binary path is exercised by the endpoint +
+scripts/check_decode.mjs.
 
 Usage:
     .venv/bin/python spikes/layout-sgd/run_layout.py backend/data/example3.gfa
@@ -11,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -29,14 +30,7 @@ from matplotlib.collections import LineCollection
 from app.parsers.gfa import parse_gfa
 from app.layout.port_graph import build_port_graph, PortGraphParams
 from app.layout.engine_sgd import layout_port_graph, SgdParams
-
-TAB20 = plt.get_cmap("tab20")
-
-
-def width_from_coverage(cov: float | None) -> float:
-    if cov is None or cov <= 0:
-        return 2.0
-    return max(1.0, min(12.0, 1.0 + 1.5 * math.sqrt(cov)))
+from app.services.ribbon import build_scene
 
 
 def main() -> None:
@@ -59,68 +53,34 @@ def main() -> None:
 
     n_nodes = len(core.nodes)
     n_edges = len(core.edges)
-    comps = core.get_components()
-    n_comps = len(comps.summaries)
+    n_comps = len(core.get_components().summaries)
 
     pg = build_port_graph(core, PortGraphParams(length_scale=args.length_scale))
-
     t1 = time.perf_counter()
-    pos = layout_port_graph(
-        pg, SgdParams(iterations=args.iterations, n_pivots=args.pivots)
-    )
+    pos = layout_port_graph(pg, SgdParams(iterations=args.iterations, n_pivots=args.pivots))
     t_layout = time.perf_counter() - t1
 
-    # --- assemble ribbons + links ---
-    ribbon_segs: list[list[tuple[float, float]]] = []
-    ribbon_widths: list[float] = []
-    ribbon_colors: list[tuple[float, float, float, float]] = []
+    scene = build_scene(core, pg, pos, source=args.gfa.stem)
 
-    contig_pos: list[float] = []   # flat inX,inY,outX,outY
-    contig_w: list[float] = []
-    contig_rgba: list[int] = []
-
-    for cid, (in_id, out_id) in pg.contigs.items():
-        x0, y0 = pos[in_id]
-        x1, y1 = pos[out_id]
-        w = width_from_coverage(pg.meta[cid]["coverage"])
-        c = TAB20(comps.node_to_cid[cid] % 20)
-        ribbon_segs.append([(x0, y0), (x1, y1)])
-        ribbon_widths.append(w)
-        ribbon_colors.append(c)
-        contig_pos += [x0, y0, x1, y1]
-        contig_w.append(w)
-        contig_rgba += [int(c[0] * 255), int(c[1] * 255), int(c[2] * 255), 255]
-
-    link_segs: list[list[tuple[float, float]]] = []
-    link_pos: list[float] = []
-    for e in pg.edges:
-        if e.kind != "EXTERNAL":
-            continue
-        x0, y0 = pos[e.u]
-        x1, y1 = pos[e.v]
-        link_segs.append([(x0, y0), (x1, y1)])
-        link_pos += [x0, y0, x1, y1]
-
-    xs = [p[0] for p in pos.values()]
-    ys = [p[1] for p in pos.values()]
-    bbox = [min(xs), min(ys), max(xs), max(ys)]
-    span_x = bbox[2] - bbox[0]
-    span_y = bbox[3] - bbox[1]
+    # reshape flat columns for rendering
+    cpos = scene.contig_positions.reshape(-1, 2, 2)
+    ccol = scene.contig_color.reshape(-1, 4) / 255.0
+    lpos = scene.link_positions.reshape(-1, 2, 2) if scene.link_positions.size else np.empty((0, 2, 2))
+    bbox = scene.bbox
+    span_x, span_y = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
     # --- PNG ---
     args.out.mkdir(parents=True, exist_ok=True)
     stem = args.gfa.stem
     fig, ax = plt.subplots(figsize=(16, 16), dpi=100)
     ax.set_facecolor("#0b0e14")
-    if link_segs:
-        ax.add_collection(
-            LineCollection(link_segs, colors="#3a4150", linewidths=0.4, zorder=1)
-        )
+    if len(lpos):
+        ax.add_collection(LineCollection(lpos, colors="#3a4150", linewidths=0.4, zorder=1))
     ax.add_collection(
         LineCollection(
-            ribbon_segs,
-            colors=ribbon_colors,
-            linewidths=[w * 0.6 for w in ribbon_widths],
+            cpos,
+            colors=ccol,
+            linewidths=(scene.contig_width * 0.6).tolist(),
             capstyle="round",
             zorder=2,
         )
@@ -137,16 +97,20 @@ def main() -> None:
     fig.savefig(png_path, facecolor="#0b0e14", bbox_inches="tight")
     plt.close(fig)
 
-    # --- scene JSON for deck.gl spike ---
-    scene = {
-        "source": stem,
-        "contigCount": len(contig_w),
-        "contigs": {"positions": contig_pos, "width": contig_w, "color": contig_rgba},
-        "links": {"positions": link_pos},
-        "bbox": bbox,
+    # --- JSON scene for the deck.gl spike (?scene=) ---
+    scene_json = {
+        "source": scene.source,
+        "contigCount": scene.contig_count,
+        "contigs": {
+            "positions": scene.contig_positions.tolist(),
+            "width": scene.contig_width.tolist(),
+            "color": scene.contig_color.tolist(),
+        },
+        "links": {"positions": scene.link_positions.tolist()},
+        "bbox": list(bbox),
     }
     args.scene_out.parent.mkdir(parents=True, exist_ok=True)
-    args.scene_out.write_text(json.dumps(scene))
+    args.scene_out.write_text(json.dumps(scene_json))
 
     print(f"parsed:   {n_nodes} contigs, {n_edges} links, {n_comps} components")
     print(f"parse:    {t_parse:.2f}s   layout: {t_layout:.2f}s")

@@ -1,3 +1,4 @@
 node_modules/
 dist/
+dist-codec/
 public/scene.json

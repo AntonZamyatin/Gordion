@@ -10,6 +10,7 @@
 
 import { Deck, OrthographicView } from '@deck.gl/core';
 import { PathLayer } from '@deck.gl/layers';
+import { decodeScene } from './sceneCodec';
 
 const params = new URLSearchParams(location.search);
 const hud = document.getElementById('hud')!;
@@ -75,7 +76,7 @@ function makeSynthetic(n: number): Ribbons {
   };
 }
 
-async function loadScene(url: string): Promise<{ ribbons: Ribbons; links: Float32Array }> {
+async function loadJsonScene(url: string): Promise<{ ribbons: Ribbons; links: Float32Array }> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch ${url}: ${res.status}`);
   const s = await res.json();
@@ -86,6 +87,23 @@ async function loadScene(url: string): Promise<{ ribbons: Ribbons; links: Float3
   const links = new Float32Array(s.links?.positions ?? []);
   const bbox: [number, number, number, number] = s.bbox ?? bboxOf(positions, count);
   return { ribbons: { count, positions, widths, colors, startIndices: startIndicesFor(count), bbox }, links };
+}
+
+async function loadBinaryScene(url: string): Promise<{ ribbons: Ribbons; links: Float32Array }> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: ${res.status}`);
+  const s = decodeScene(await res.arrayBuffer());
+  return {
+    ribbons: {
+      count: s.contigCount,
+      positions: s.contigPositions,
+      widths: s.contigWidth,
+      colors: s.contigColor,
+      startIndices: startIndicesFor(s.contigCount),
+      bbox: s.bbox,
+    },
+    links: s.linkPositions,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -138,13 +156,19 @@ function linkLayer(links: Float32Array) {
 
 // ---------------------------------------------------------------------------
 (async function main() {
+  const binUrl = params.get('bin');
   const sceneUrl = params.get('scene');
   let ribbons: Ribbons;
   let links: Float32Array = new Float32Array(0);
   let label: string;
 
-  if (sceneUrl) {
-    const loaded = await loadScene(sceneUrl);
+  if (binUrl) {
+    const loaded = await loadBinaryScene(binUrl);
+    ribbons = loaded.ribbons;
+    links = loaded.links;
+    label = `bin ${binUrl}`;
+  } else if (sceneUrl) {
+    const loaded = await loadJsonScene(sceneUrl);
     ribbons = loaded.ribbons;
     links = loaded.links;
     label = `scene ${sceneUrl}`;

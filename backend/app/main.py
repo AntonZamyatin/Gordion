@@ -3,11 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.models.schemas import GraphDTO, NodeDTO, EdgeDTO
 from app.parsers.gfa import parse_gfa
 from app.api.routes_graph import router as graphs_router
+from app.api.routes_scene import router as scene_router
 
 
 app = FastAPI(title="Gordion")
 
 app.include_router(graphs_router)
+app.include_router(scene_router)
 
 # Allow the frontend dev server to call the backend during development.
 # In production you will tighten this.
