@@ -1,155 +1,205 @@
-// Phase 1 spike: prove deck.gl PathLayer performance + picking at ~200k ribbons.
+// Phase 1 + 2 spike: deck.gl PathLayer performance/picking, and viewing real
+// SGD layouts.
 //
-// A "ribbon" here is a 2-point path (IN -> OUT) with a per-path width and color,
-// mirroring the eventual scene contract (binary typed-array columns). Positions
-// are fed to deck.gl as a *binary* attribute (the representative zero-copy path);
-// width/color use index-based accessors over per-path typed arrays.
+// Two modes:
+//   (default)      ~200k synthetic ribbons  -> perf + picking de-risk (Phase 1)
+//   ?scene=/scene.json   a real GFA layout produced by the Phase 2 driver
 //
-// Goal: eyeball smooth pan/zoom at scale and confirm picking returns the right
-// ribbon. Override the count with ?n=500000 in the URL to push harder.
+// A "ribbon" is a 2-point path (IN -> OUT) with per-path width and color, fed to
+// deck.gl as a binary typed-array attribute (mirrors the planned scene contract).
 
 import { Deck, OrthographicView } from '@deck.gl/core';
 import { PathLayer } from '@deck.gl/layers';
 
-const N = Number(new URLSearchParams(location.search).get('n')) || 200_000;
-
-// ----------------------------------------------------------------------------
-// Synthetic scene: a jittered grid of short, randomly-oriented ribbons.
-// Deterministic (no Math.random) so runs are comparable.
-// ----------------------------------------------------------------------------
-const positions = new Float32Array(N * 4); // [inX, inY, outX, outY] per ribbon
-const widths = new Float32Array(N);
-const colors = new Uint8Array(N * 4); // RGBA per ribbon
-const startIndices = new Uint32Array(N + 1); // vertex offsets: [0, 2, 4, ...]
-
-const cols = Math.ceil(Math.sqrt(N));
-const spacing = 20;
-
-let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-const frac = (x: number) => x - Math.floor(x);
-
-for (let i = 0; i < N; i++) {
-  const gx = (i % cols) * spacing;
-  const gy = Math.floor(i / cols) * spacing;
-
-  // deterministic pseudo-random angle + length
-  const ang = frac(Math.sin(i * 12.9898) * 43758.5453) * Math.PI * 2;
-  const len = 6 + frac(Math.sin(i * 78.233) * 12345.678) * 12; // 6..18
-
-  const x0 = gx;
-  const y0 = gy;
-  const x1 = gx + Math.cos(ang) * len;
-  const y1 = gy + Math.sin(ang) * len;
-
-  positions[i * 4] = x0;
-  positions[i * 4 + 1] = y0;
-  positions[i * 4 + 2] = x1;
-  positions[i * 4 + 3] = y1;
-
-  widths[i] = 1 + (i % 8); // 1..8 px
-
-  colors[i * 4] = 60 + ((i * 53) % 195);
-  colors[i * 4 + 1] = 60 + ((i * 97) % 195);
-  colors[i * 4 + 2] = 60 + ((i * 29) % 195);
-  colors[i * 4 + 3] = 255;
-
-  startIndices[i] = i * 2;
-
-  if (x0 < minX) minX = x0; if (x1 < minX) minX = x1;
-  if (y0 < minY) minY = y0; if (y1 < minY) minY = y1;
-  if (x0 > maxX) maxX = x0; if (x1 > maxX) maxX = x1;
-  if (y0 > maxY) maxY = y0; if (y1 > maxY) maxY = y1;
-}
-startIndices[N] = N * 2;
-
-// ----------------------------------------------------------------------------
-// Fit the view to the generated extent.
-// Orthographic zoom z: 1 world unit == 2^z pixels.
-// ----------------------------------------------------------------------------
-const cx = (minX + maxX) / 2;
-const cy = (minY + maxY) / 2;
-const extent = Math.max(maxX - minX, maxY - minY) || 1;
-const viewportGuess = Math.min(window.innerWidth, window.innerHeight) * 0.9;
-const initialZoom = Math.log2(viewportGuess / extent);
-
-const layer = new PathLayer({
-  id: 'ribbons',
-  data: {
-    length: N,
-    startIndices,
-    attributes: {
-      getPath: { value: positions, size: 2 },
-    },
-  } as unknown as [], // binary-data form; deck's TS types expect an array
-  _pathType: 'open',
-  positionFormat: 'XY',
-  getColor: (_object: unknown, info: { index: number }) => {
-    const j = info.index * 4;
-    return [colors[j], colors[j + 1], colors[j + 2], colors[j + 3]];
-  },
-  getWidth: (_object: unknown, info: { index: number }) => widths[info.index],
-  widthUnits: 'pixels',
-  widthMinPixels: 1,
-  widthMaxPixels: 40,
-  capRounded: true,
-  jointRounded: true,
-  pickable: true,
-  autoHighlight: true,
-  highlightColor: [255, 208, 0, 255],
-});
-
-// ----------------------------------------------------------------------------
-// HUD
-// ----------------------------------------------------------------------------
+const params = new URLSearchParams(location.search);
 const hud = document.getElementById('hud')!;
-let picked = 'hover: (none)';
 
-function renderHud(fps: number) {
-  hud.textContent =
-    `ribbons: ${N.toLocaleString()}   vertices: ${(N * 2).toLocaleString()}\n` +
-    `fps (rAF): ${fps.toFixed(0)}\n` +
-    `${picked}\n` +
-    `drag = pan · wheel = zoom · hover/click a ribbon`;
+type Ribbons = {
+  count: number;
+  positions: Float32Array; // [inX,inY,outX,outY] per ribbon
+  widths: Float32Array; // per ribbon
+  colors: Uint8Array; // RGBA per ribbon
+  startIndices: Uint32Array; // [0,2,4,...]
+  bbox: [number, number, number, number];
+};
+
+function startIndicesFor(count: number): Uint32Array {
+  const s = new Uint32Array(count + 1);
+  for (let i = 0; i <= count; i++) s[i] = i * 2;
+  return s;
 }
 
-function setPicked(kind: 'hover' | 'click', index: number | null) {
-  if (index == null || index < 0) {
-    if (kind === 'hover') picked = 'hover: (none)';
-    return;
+function bboxOf(positions: Float32Array, count: number): [number, number, number, number] {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const x0 = positions[i * 4], y0 = positions[i * 4 + 1];
+    const x1 = positions[i * 4 + 2], y1 = positions[i * 4 + 3];
+    if (x0 < minX) minX = x0; if (x1 < minX) minX = x1;
+    if (y0 < minY) minY = y0; if (y1 < minY) minY = y1;
+    if (x0 > maxX) maxX = x0; if (x1 > maxX) maxX = x1;
+    if (y0 > maxY) maxY = y0; if (y1 > maxY) maxY = y1;
   }
-  const j = index * 4;
-  picked =
-    `${kind}: ribbon #${index}  width=${widths[index].toFixed(1)}px  ` +
-    `rgb(${colors[j]},${colors[j + 1]},${colors[j + 2]})`;
+  return [minX, minY, maxX, maxY];
 }
 
-// ----------------------------------------------------------------------------
-// Deck
-// ----------------------------------------------------------------------------
-new Deck({
-  parent: document.getElementById('app') as HTMLDivElement,
-  views: new OrthographicView({ flipY: false }),
-  initialViewState: { target: [cx, cy, 0], zoom: initialZoom },
-  controller: true,
-  layers: [layer],
-  onHover: (info) => setPicked('hover', info.index),
-  onClick: (info) => setPicked('click', info.index),
-});
-
-// rAF-based fps proxy: drops when the main thread saturates.
-let frames = 0;
-let last = performance.now();
-let fps = 0;
-function tick() {
-  frames++;
-  const now = performance.now();
-  if (now - last >= 500) {
-    fps = (frames * 1000) / (now - last);
-    frames = 0;
-    last = now;
+// ---------------------------------------------------------------------------
+function makeSynthetic(n: number): Ribbons {
+  const positions = new Float32Array(n * 4);
+  const widths = new Float32Array(n);
+  const colors = new Uint8Array(n * 4);
+  const cols = Math.ceil(Math.sqrt(n));
+  const spacing = 20;
+  const frac = (x: number) => x - Math.floor(x);
+  for (let i = 0; i < n; i++) {
+    const gx = (i % cols) * spacing;
+    const gy = Math.floor(i / cols) * spacing;
+    const ang = frac(Math.sin(i * 12.9898) * 43758.5453) * Math.PI * 2;
+    const len = 6 + frac(Math.sin(i * 78.233) * 12345.678) * 12;
+    positions[i * 4] = gx;
+    positions[i * 4 + 1] = gy;
+    positions[i * 4 + 2] = gx + Math.cos(ang) * len;
+    positions[i * 4 + 3] = gy + Math.sin(ang) * len;
+    widths[i] = 1 + (i % 8);
+    colors[i * 4] = 60 + ((i * 53) % 195);
+    colors[i * 4 + 1] = 60 + ((i * 97) % 195);
+    colors[i * 4 + 2] = 60 + ((i * 29) % 195);
+    colors[i * 4 + 3] = 255;
   }
-  renderHud(fps);
-  requestAnimationFrame(tick);
+  return {
+    count: n,
+    positions,
+    widths,
+    colors,
+    startIndices: startIndicesFor(n),
+    bbox: bboxOf(positions, n),
+  };
 }
-tick();
+
+async function loadScene(url: string): Promise<{ ribbons: Ribbons; links: Float32Array }> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch ${url}: ${res.status}`);
+  const s = await res.json();
+  const count: number = s.contigCount;
+  const positions = new Float32Array(s.contigs.positions);
+  const widths = new Float32Array(s.contigs.width);
+  const colors = new Uint8Array(s.contigs.color);
+  const links = new Float32Array(s.links?.positions ?? []);
+  const bbox: [number, number, number, number] = s.bbox ?? bboxOf(positions, count);
+  return { ribbons: { count, positions, widths, colors, startIndices: startIndicesFor(count), bbox }, links };
+}
+
+// ---------------------------------------------------------------------------
+function ribbonLayer(r: Ribbons, onPick: (kind: 'hover' | 'click', i: number | null) => void) {
+  return new PathLayer({
+    id: 'ribbons',
+    data: {
+      length: r.count,
+      startIndices: r.startIndices,
+      attributes: { getPath: { value: r.positions, size: 2 } },
+    } as unknown as [],
+    _pathType: 'open',
+    positionFormat: 'XY',
+    getColor: (_o: unknown, info: { index: number }) => {
+      const j = info.index * 4;
+      return [r.colors[j], r.colors[j + 1], r.colors[j + 2], r.colors[j + 3]];
+    },
+    getWidth: (_o: unknown, info: { index: number }) => r.widths[info.index],
+    widthUnits: 'pixels',
+    widthMinPixels: 1,
+    widthMaxPixels: 40,
+    capRounded: true,
+    jointRounded: true,
+    pickable: true,
+    autoHighlight: true,
+    highlightColor: [255, 208, 0, 255],
+    onHover: (info) => onPick('hover', info.index),
+    onClick: (info) => onPick('click', info.index),
+  });
+}
+
+function linkLayer(links: Float32Array) {
+  const count = links.length / 4;
+  return new PathLayer({
+    id: 'links',
+    data: {
+      length: count,
+      startIndices: startIndicesFor(count),
+      attributes: { getPath: { value: links, size: 2 } },
+    } as unknown as [],
+    _pathType: 'open',
+    positionFormat: 'XY',
+    getColor: [90, 100, 120, 160],
+    getWidth: 1,
+    widthUnits: 'pixels',
+    widthMinPixels: 0.5,
+    pickable: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+(async function main() {
+  const sceneUrl = params.get('scene');
+  let ribbons: Ribbons;
+  let links: Float32Array = new Float32Array(0);
+  let label: string;
+
+  if (sceneUrl) {
+    const loaded = await loadScene(sceneUrl);
+    ribbons = loaded.ribbons;
+    links = loaded.links;
+    label = `scene ${sceneUrl}`;
+  } else {
+    const n = Number(params.get('n')) || 200_000;
+    ribbons = makeSynthetic(n);
+    label = `synthetic`;
+  }
+
+  const [minX, minY, maxX, maxY] = ribbons.bbox;
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const extent = Math.max(maxX - minX, maxY - minY) || 1;
+  const viewportGuess = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+  const initialZoom = Math.log2(viewportGuess / extent);
+
+  let picked = 'hover: (none)';
+  const setPicked = (kind: 'hover' | 'click', index: number | null) => {
+    if (index == null || index < 0) {
+      if (kind === 'hover') picked = 'hover: (none)';
+      return;
+    }
+    const j = index * 4;
+    picked =
+      `${kind}: contig #${index}  width=${ribbons.widths[index].toFixed(1)}px  ` +
+      `rgb(${ribbons.colors[j]},${ribbons.colors[j + 1]},${ribbons.colors[j + 2]})`;
+  };
+
+  const layers = links.length ? [linkLayer(links), ribbonLayer(ribbons, setPicked)] : [ribbonLayer(ribbons, setPicked)];
+
+  new Deck({
+    parent: document.getElementById('app') as HTMLDivElement,
+    views: new OrthographicView({ flipY: false }),
+    initialViewState: { target: [cx, cy, 0], zoom: initialZoom },
+    controller: true,
+    layers,
+  });
+
+  let frames = 0;
+  let last = performance.now();
+  let fps = 0;
+  const tick = () => {
+    frames++;
+    const now = performance.now();
+    if (now - last >= 500) {
+      fps = (frames * 1000) / (now - last);
+      frames = 0;
+      last = now;
+    }
+    hud.textContent =
+      `${label}   ribbons: ${ribbons.count.toLocaleString()}   links: ${(links.length / 4).toLocaleString()}\n` +
+      `fps (rAF): ${fps.toFixed(0)}\n` +
+      `${picked}\n` +
+      `drag = pan · wheel = zoom · hover/click a ribbon`;
+    requestAnimationFrame(tick);
+  };
+  tick();
+})();
