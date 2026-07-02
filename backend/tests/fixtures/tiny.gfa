@@ -1,0 +1,11 @@
+H	VN:Z:1.0
+S	s1	*	LN:i:100	dp:f:5.0
+S	s2	ACGTACGTAC	dp:f:3.5
+S	s3	*	LN:i:250
+S	s4	*	LN:i:40	KC:i:80
+S	s5	*	LN:i:60
+S	s6	*	LN:i:10
+L	s1	+	s2	+	10M
+L	s2	+	s3	-	5M
+L	s1	+	s3	+	0M
+L	s4	+	s5	+	3M
