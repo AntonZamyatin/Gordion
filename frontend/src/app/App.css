@@ -102,18 +102,16 @@
   color: rgb(12, 12, 12);
 }
 
-/* Make Sigma fill the main cell */
-.main .react-sigma,
-.main .sigma-container {
-  width: 100%;
-  height: 100%;
+/* deck.gl canvas fills the main cell (DeckGL is absolutely positioned inset:0) */
+.deckOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9aa0a6;
+  font: 14px system-ui, sans-serif;
 }
-
-/* Ensure Sigma container is a positioning context for its canvases */
-.main .sigma-container {
-  position: relative;
-}
-
 
 /* Optional: when collapsed, hide body content but keep header/collapse button */
 .appShell[data-left-collapsed="true"] .leftBar .sidebarBody { display: none; }

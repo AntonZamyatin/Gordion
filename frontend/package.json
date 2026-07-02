@@ -10,11 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@react-sigma/core": "^5.0.6",
-    "graphology-layout": "^0.6.1",
+    "@deck.gl/core": "^9.3.5",
+    "@deck.gl/layers": "^9.3.5",
+    "@deck.gl/react": "^9.3.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "sigma": "^3.0.2"
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

@@ -1,28 +1,29 @@
 // src/app/App.tsx
-import { useState } from "react";
-import "./app.css";
-import { dbg } from "../debug.ts";
+import { useEffect, useRef, useState } from "react";
+import "./App.css";
 
 import { TopBar } from "../features/ui/TopBar";
 import { LeftSidebar } from "../features/ui/LeftSidebar";
 import { RightSidebar } from "../features/ui/RightSidebar";
-import { GraphCanvas } from "../features/graph/GraphCanvas";
+import { DeckCanvas } from "../features/graph/DeckCanvas";
+import { useGraphStore } from "../store/useGraphStore";
+
+const DEFAULT_GRAPH = "example3";
 
 export default function App() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
 
-  const onToggleLeft = () => {
-    dbg("UI toggle LEFT (before)", { leftCollapsed });
-    setLeftCollapsed(v => {
-      dbg("UI toggle LEFT (state updater)", { prev: v, next: !v });
-      return !v;
-    });
-  };
+  const loadGraph = useGraphStore((s) => s.loadGraph);
+  const loadedRef = useRef(false);
 
-  dbg("App render", { leftCollapsed, rightCollapsed });
+  useEffect(() => {
+    // Guard against React StrictMode's double effect invocation.
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+    void loadGraph(DEFAULT_GRAPH);
+  }, [loadGraph]);
 
-  
   return (
     <div
       className="appShell"
@@ -39,7 +40,7 @@ export default function App() {
       <LeftSidebar collapsed={leftCollapsed} />
 
       <main className="main">
-        <GraphCanvas />
+        <DeckCanvas />
       </main>
 
       <RightSidebar collapsed={rightCollapsed} />
