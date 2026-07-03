@@ -32,3 +32,12 @@ export async function fetchScene(baseUrl: string, graphId: string, recompute = f
   if (!r.ok) throw new Error(`scene: HTTP ${r.status}`);
   return decodeScene(await r.arrayBuffer());
 }
+
+export type DatasetInfo = { name: string; sizeBytes: number };
+
+export async function listDatasets(baseUrl: string): Promise<DatasetInfo[]> {
+  const r = await fetch(`${baseUrl}/graphs/datasets`);
+  if (!r.ok) throw new Error(`datasets: HTTP ${r.status}`);
+  const j = await r.json();
+  return j.datasets;
+}

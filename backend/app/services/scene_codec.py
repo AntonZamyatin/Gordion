@@ -31,7 +31,7 @@ f32 columns are emitted before u8 columns so every float column starts at a
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import struct
 
@@ -39,8 +39,16 @@ import numpy as np
 
 MAGIC = b"GSC1"
 
-_DTYPE_TO_TAG = {np.dtype(np.float32): "f32", np.dtype(np.uint8): "u8"}
-_TAG_TO_DTYPE = {"f32": np.float32, "u8": np.uint8}
+_DTYPE_TO_TAG = {
+    np.dtype(np.float32): "f32",
+    np.dtype(np.uint32): "u32",
+    np.dtype(np.uint8): "u8",
+}
+_TAG_TO_DTYPE = {"f32": np.float32, "u32": np.uint32, "u8": np.uint8}
+
+
+def _empty_endpoints() -> np.ndarray:
+    return np.empty(0, dtype=np.uint32)
 
 
 @dataclass(slots=True)
@@ -52,6 +60,9 @@ class Scene:
     link_positions: np.ndarray    # float32, flat [x0,y0,x1,y1]* -> len L*4
     id_table: list[str]
     bbox: tuple[float, float, float, float]
+    # uint32, flat [contigA,sideA,contigB,sideB]* -> len L*4. side: 0=IN, 1=OUT.
+    # Lets the client re-derive link geometry from (possibly edited) port positions.
+    link_endpoints: np.ndarray = field(default_factory=_empty_endpoints)
 
     @property
     def contig_count(self) -> int:
@@ -76,10 +87,11 @@ def encode_scene(scene: Scene) -> bytes:
         }
         body.extend(a.tobytes())
 
-    # float columns first (keeps every f32 offset 4-byte aligned), u8 last
+    # 4-byte columns first (keeps every f32/u32 offset 4-byte aligned), u8 last
     add("contigPositions", scene.contig_positions, np.float32, 4)
     add("contigWidth", scene.contig_width, np.float32, 1)
     add("linkPositions", scene.link_positions, np.float32, 4)
+    add("linkEndpoints", scene.link_endpoints, np.uint32, 4)
     add("contigColor", scene.contig_color, np.uint8, 4)
 
     manifest = {
@@ -116,6 +128,8 @@ def decode_scene(buf: bytes) -> Scene:
         return np.frombuffer(body[start : start + nbytes], dtype=dt).copy()
 
     bbox = tuple(manifest["bbox"])  # type: ignore[assignment]
+    # linkEndpoints is optional for back-compat with older encoders.
+    link_endpoints = col("linkEndpoints") if "linkEndpoints" in manifest["columns"] else _empty_endpoints()
     return Scene(
         source=manifest["source"],
         contig_positions=col("contigPositions"),
@@ -124,4 +138,5 @@ def decode_scene(buf: bytes) -> Scene:
         contig_color=col("contigColor"),
         id_table=list(manifest["idTable"]),
         bbox=bbox,  # type: ignore[arg-type]
+        link_endpoints=link_endpoints,
     )

@@ -7,7 +7,7 @@
 //
 // Each column is copied into a fresh typed array (alignment-safe).
 
-export type SceneColumn = { dtype: "f32" | "u8"; size: number; offset: number; length: number };
+export type SceneColumn = { dtype: "f32" | "u32" | "u8"; size: number; offset: number; length: number };
 
 export type Scene = {
   source: string;
@@ -16,7 +16,8 @@ export type Scene = {
   contigPositions: Float32Array; // [inX,inY,outX,outY] per contig
   contigWidth: Float32Array; // per contig
   contigColor: Uint8Array; // RGBA per contig
-  linkPositions: Float32Array; // [x0,y0,x1,y1] per link
+  linkPositions: Float32Array; // [x0,y0,x1,y1] per link (baked; recomputed client-side on edit)
+  linkEndpoints: Uint32Array; // [contigA,sideA,contigB,sideB] per link; side 0=IN, 1=OUT
   idTable: string[]; // contig index -> core node id
   bbox: [number, number, number, number];
 };
@@ -41,6 +42,12 @@ export function decodeScene(buf: ArrayBuffer): Scene {
     const start = bodyStart + c.offset;
     return new Uint8Array(buf.slice(start, start + c.length));
   };
+  const u32 = (name: string): Uint32Array => {
+    const c = columns[name];
+    if (!c) return new Uint32Array(0); // optional / back-compat
+    const start = bodyStart + c.offset;
+    return new Uint32Array(buf.slice(start, start + c.length * 4));
+  };
 
   return {
     source: manifest.source,
@@ -50,6 +57,7 @@ export function decodeScene(buf: ArrayBuffer): Scene {
     contigWidth: f32("contigWidth"),
     contigColor: u8("contigColor"),
     linkPositions: f32("linkPositions"),
+    linkEndpoints: u32("linkEndpoints"),
     idTable: manifest.idTable,
     bbox: manifest.bbox,
   };

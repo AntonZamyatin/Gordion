@@ -5,12 +5,20 @@ type Props = {
   collapsed: boolean;
 };
 
-const DATASETS = ["example3", "example1", "example"];
+const LARGE_FILE_BYTES = 500 * 1024 * 1024; // flag anything over this before it's clicked
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
 
 export function LeftSidebar({ collapsed }: Props) {
   const source = useGraphStore((s) => s.source);
   const status = useGraphStore((s) => s.status);
+  const datasets = useGraphStore((s) => s.datasets);
   const loadGraph = useGraphStore((s) => s.loadGraph);
+  const loadDatasets = useGraphStore((s) => s.loadDatasets);
   const recomputeLayout = useGraphStore((s) => s.recomputeLayout);
   const busy = status === "loading";
 
@@ -21,18 +29,41 @@ export function LeftSidebar({ collapsed }: Props) {
       </div>
 
       <div className="sidebarBody">
-        <div style={{ marginBottom: 10, fontWeight: 600 }}>Dataset</div>
+        <div
+          style={{
+            marginBottom: 10,
+            fontWeight: 600,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span>Open dataset</span>
+          <button className="iconBtn" disabled={busy} onClick={() => void loadDatasets()} title="Rescan data/">
+            ↻
+          </button>
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {DATASETS.map((name) => (
+          {datasets.length === 0 && <div style={{ opacity: 0.6 }}>No .gfa files found</div>}
+          {datasets.map(({ name, sizeBytes }) => (
             <button
               key={name}
               className="iconBtn"
               disabled={busy}
-              style={{ width: "100%", opacity: name === source ? 1 : 0.7 }}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                opacity: name === source ? 1 : 0.7,
+              }}
+              title={sizeBytes >= LARGE_FILE_BYTES ? "Large file — loading may take a while" : undefined}
               onClick={() => void loadGraph(name)}
             >
               {name === source ? "● " : ""}
               {name}.gfa
+              <span style={{ float: "right", fontFamily: "monospace", opacity: 0.7 }}>
+                {formatSize(sizeBytes)}
+                {sizeBytes >= LARGE_FILE_BYTES ? " ⚠" : ""}
+              </span>
             </button>
           ))}
         </div>

@@ -15,6 +15,7 @@ export default function App() {
   const [rightCollapsed, setRightCollapsed] = useState(false);
 
   const loadGraph = useGraphStore((s) => s.loadGraph);
+  const loadDatasets = useGraphStore((s) => s.loadDatasets);
   const loadedRef = useRef(false);
 
   useEffect(() => {
@@ -22,7 +23,8 @@ export default function App() {
     if (loadedRef.current) return;
     loadedRef.current = true;
     void loadGraph(DEFAULT_GRAPH);
-  }, [loadGraph]);
+    void loadDatasets();
+  }, [loadGraph, loadDatasets]);
 
   return (
     <div

@@ -14,3 +14,13 @@ class ComponentDTO(BaseModel):
 
 class ComponentsDTO(BaseModel):
     components: List[ComponentDTO]
+
+
+# -------- Dataset DTOs --------
+class DatasetDTO(BaseModel):
+    name: str  # pass this as ?name= to POST /graphs/load
+    sizeBytes: int
+
+
+class DatasetsDTO(BaseModel):
+    datasets: List[DatasetDTO]

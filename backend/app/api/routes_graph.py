@@ -9,14 +9,17 @@ from fastapi import APIRouter, HTTPException, Response
 from app.parsers.gfa import parse_gfa
 from app.services.session_store import SessionStore, GraphSession
 from app.services.scene_service import scene_bytes_for_session
-from app.models.schemas import ComponentsDTO, ComponentDTO
+from app.models.schemas import ComponentsDTO, ComponentDTO, DatasetsDTO, DatasetDTO
 
 router = APIRouter(prefix="/graphs", tags=["graphs"])
 
 STORE = SessionStore()
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+# Single path component only (no "/"), so DATA_DIR / f"{name}.gfa" can never escape
+# DATA_DIR. Dots/hyphens are allowed because real assembly filenames use them
+# (e.g. "hg002_hic.hic.hap1.p_ctg").
+_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _session_or_404(graph_id: str) -> GraphSession:
@@ -27,6 +30,16 @@ def _session_or_404(graph_id: str) -> GraphSession:
     if not STORE.has(sid):
         raise HTTPException(status_code=404, detail="Unknown graph_id")
     return STORE.get(sid)
+
+
+@router.get("/datasets", response_model=DatasetsDTO)
+def list_datasets() -> DatasetsDTO:
+    """Every .gfa in data/, so the frontend can offer an Open dataset without any
+    dataset name being hardcoded on either side."""
+    files = sorted(DATA_DIR.glob("*.gfa"), key=lambda p: p.name)
+    return DatasetsDTO(
+        datasets=[DatasetDTO(name=f.stem, sizeBytes=f.stat().st_size) for f in files]
+    )
 
 
 @router.post("/load")

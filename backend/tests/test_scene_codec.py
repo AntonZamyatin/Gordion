@@ -52,3 +52,17 @@ def test_full_pipeline_round_trips(tiny_graph):
     assert set(d.id_table) == set(tiny_graph.nodes)
     # 4 links in the fixture
     assert d.link_count == len(tiny_graph.edges)
+    # each link carries (contig, side) refs for both endpoints, sides are 0/1,
+    # and the referenced ports match the baked link coordinates
+    assert d.link_endpoints.shape == (d.link_count * 4,)
+    ep = d.link_endpoints.reshape(-1, 4)
+    assert set(ep[:, 1]) | set(ep[:, 3]) <= {0, 1}
+    for k, (ia, sa, ib, sb) in enumerate(ep):
+        np.testing.assert_allclose(
+            d.contig_positions[ia * 4 + sa * 2 : ia * 4 + sa * 2 + 2],
+            d.link_positions[k * 4 : k * 4 + 2],
+        )
+        np.testing.assert_allclose(
+            d.contig_positions[ib * 4 + sb * 2 : ib * 4 + sb * 2 + 2],
+            d.link_positions[k * 4 + 2 : k * 4 + 4],
+        )

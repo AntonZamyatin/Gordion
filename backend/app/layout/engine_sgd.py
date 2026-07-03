@@ -7,7 +7,12 @@ matches graph-theoretic distance, which unfolds chain-like genome graphs into
 straight backbones (the BandageNG look) instead of curling them into knots.
 
 Design:
-- Layout is per connected component, then components are row-packed.
+- Layout is per connected component. Each component is then rigidly rotated to
+  its *tightest* (minimum-area) bounding box so a thin chain lies flat as a bar
+  (`_min_area_rotation`), very elongated ones get a small cosmetic tilt, and the
+  boxes are tiled from a corner into a roughly square page, largest first
+  (`_corner_pack`). None of this touches solver output — all rigid isometries, so
+  intra-component distances are unchanged.
 - A diameter-backbone linear seed gives a strong "unfolded" prior.
 - Stress terms come from all edges (local structure + bp-scaled lengths) plus a
   sparse set of pivot->all-nodes terms (global structure) so we avoid O(n^2).
@@ -323,25 +328,181 @@ def _layout_component(
     return pos
 
 
-def _row_pack(boxes: list[tuple[float, float]], pad: float) -> list[tuple[float, float]]:
-    """Place component bounding boxes (w, h) into rows; return (ox, oy) offsets."""
-    if not boxes:
+def _convex_hull(points: np.ndarray) -> np.ndarray:
+    """Andrew's monotone chain convex hull. Returns hull vertices in CCW order
+    (no repeated closing point); handles degenerate (<3 point) inputs."""
+    pts = sorted(set(map(tuple, points.tolist())))
+    if len(pts) < 3:
+        return np.asarray(pts, dtype=np.float64)
+
+    def cross(o: tuple[float, float], a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for pt in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], pt) <= 0:
+            lower.pop()
+        lower.append(pt)
+    upper: list[tuple[float, float]] = []
+    for pt in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], pt) <= 0:
+            upper.pop()
+        upper.append(pt)
+    return np.asarray(lower[:-1] + upper[:-1], dtype=np.float64)
+
+
+def _bbox_wh(hull: np.ndarray, angle: float) -> tuple[float, float]:
+    c, s = math.cos(-angle), math.sin(-angle)
+    rx = hull[:, 0] * c - hull[:, 1] * s
+    ry = hull[:, 0] * s + hull[:, 1] * c
+    return float(rx.max() - rx.min()), float(ry.max() - ry.min())
+
+
+# Laid perfectly flat, very elongated components all line up into one monotonous
+# straight row when shelved. Anything thinner than this aspect gets a small random
+# tilt so the picture reads as organic bars, not a single line. The tilt inflates
+# the packed box a little — traded deliberately for looks.
+_THIN_ASPECT = 5.0
+_TILT_MIN = math.radians(12.0)
+_TILT_MAX = math.radians(24.0)
+
+
+def _min_area_rotation(points: np.ndarray) -> float:
+    """Angle that rotates the point cloud so its axis-aligned bounding box has
+    *minimum area*. By the Freeman-Shapira "rotating calipers" theorem, the
+    minimum-area bounding rectangle of a convex polygon has one side collinear
+    with one of the polygon's edges, so it suffices to test the axis angle of
+    each hull edge and keep the tightest. A thin chain therefore ends up lying
+    flat as a thin bar (not a diagonal sliver), which is what lets the shelf
+    packer stack components with little wasted space.
+    """
+    hull = _convex_hull(points)
+    if len(hull) < 3:
+        # A single point (no rotation matters) or a segment: align it with the
+        # x axis so it becomes a flat bar.
+        if len(hull) == 2:
+            d = hull[1] - hull[0]
+            return math.atan2(float(d[1]), float(d[0]))
+        return 0.0
+
+    best_angle = 0.0
+    best_area = math.inf
+    nh = len(hull)
+    for k in range(nh):
+        edge = hull[(k + 1) % nh] - hull[k]
+        theta = math.atan2(float(edge[1]), float(edge[0]))
+        w, h = _bbox_wh(hull, theta)
+        area = w * h
+        if area < best_area:
+            best_area = area
+            best_angle = theta
+    return best_angle
+
+
+def _split_free_rect(
+    free: tuple[float, float, float, float], used: tuple[float, float, float, float]
+) -> list[tuple[float, float, float, float]]:
+    """MaxRects split: cut a free rect around a just-placed rect, returning the (up
+    to 4) leftover free rects. Non-overlapping frees pass through unchanged; caller
+    prunes the degenerate pieces."""
+    fx, fy, fw, fh = free
+    ux, uy, uw, uh = used
+    if not (ux < fx + fw and ux + uw > fx and uy < fy + fh and uy + uh > fy):
+        return [free]
+    out: list[tuple[float, float, float, float]] = []
+    if ux > fx:
+        out.append((fx, fy, ux - fx, fh))
+    if ux + uw < fx + fw:
+        out.append((ux + uw, fy, fx + fw - (ux + uw), fh))
+    if uy > fy:
+        out.append((fx, fy, fw, uy - fy))
+    if uy + uh < fy + fh:
+        out.append((fx, uy + uh, fw, fy + fh - (uy + uh)))
+    return out
+
+
+def _prune_contained(
+    rects: list[tuple[float, float, float, float]],
+) -> list[tuple[float, float, float, float]]:
+    """Drop degenerate and fully-contained free rects (keeps the free list small)."""
+    out: list[tuple[float, float, float, float]] = []
+    for i, a in enumerate(rects):
+        ax, ay, aw, ah = a
+        if aw <= 1e-9 or ah <= 1e-9:
+            continue
+        contained = False
+        for j, b in enumerate(rects):
+            if i == j:
+                continue
+            bx, by, bw, bh = b
+            if (
+                ax >= bx - 1e-9
+                and ay >= by - 1e-9
+                and ax + aw <= bx + bw + 1e-9
+                and ay + ah <= by + bh + 1e-9
+                and (bw * bh > aw * ah or (bw * bh == aw * ah and j < i))
+            ):
+                contained = True
+                break
+        if not contained:
+            out.append(a)
+    return out
+
+
+def _corner_pack(
+    boxes: list[tuple[float, float]], pad: float
+) -> list[tuple[float, float, bool]]:
+    """Pack component boxes into a roughly square page by growing out from one
+    corner: place the largest-area box first at the origin, then each next-largest
+    box in whichever free spot sits closest to that corner (smallest x+y, ties to
+    the topmost then leftmost). Big components cluster near the corner and smaller
+    ones tuck into the gaps they leave — a looser, less regimented look than shelved
+    rows, while staying overlap-free (free space is tracked as MaxRects rectangles).
+
+    `pad` is baked into each box's trailing margin so packed components never touch.
+    The square container starts at the ideal (100%-efficient) side and grows
+    geometrically until every box fits, so the page stays close to 1:1.
+
+    Returns (ox, oy, rotated) placements, one per input box, in input order; rotated
+    is always False (orientation is decided upstream) but kept for a uniform caller.
+    """
+    n = len(boxes)
+    if n == 0:
         return []
-    total_w = sum(w for w, _h in boxes)
-    row_target = max(math.sqrt(total_w * max(h for _w, h in boxes)) * 1.2, 1.0)
-    offsets: list[tuple[float, float]] = []
-    cur_x = 0.0
-    cur_y = 0.0
-    row_h = 0.0
-    for w, h in boxes:
-        if cur_x > 0.0 and cur_x + w > row_target:
-            cur_x = 0.0
-            cur_y += row_h + pad
-            row_h = 0.0
-        offsets.append((cur_x, cur_y))
-        cur_x += w + pad
-        row_h = max(row_h, h)
-    return offsets
+    padded = [(w + pad, h + pad) for w, h in boxes]
+    order = sorted(range(n), key=lambda i: -padded[i][0] * padded[i][1])
+    side = math.sqrt(sum(w * h for w, h in padded)) or 1.0
+
+    placements: list[tuple[float, float, bool]] = [(0.0, 0.0, False)] * n
+    for _ in range(40):  # bounded growth retries
+        free: list[tuple[float, float, float, float]] = [(0.0, 0.0, side, side)]
+        placed: list[tuple[float, float, bool]] = [(0.0, 0.0, False)] * n
+        ok = True
+        for i in order:
+            w, h = padded[i]
+            best_key: tuple[float, float, float] | None = None
+            best_xy = (0.0, 0.0)
+            for fx, fy, fw, fh in free:
+                if w <= fw + 1e-9 and h <= fh + 1e-9:
+                    key = (fx + fy, fy, fx)  # closest to the origin corner
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best_xy = (fx, fy)
+            if best_key is None:
+                ok = False
+                break
+            fx, fy = best_xy
+            placed[i] = (fx, fy, False)
+            used = (fx, fy, w, h)
+            next_free: list[tuple[float, float, float, float]] = []
+            for r in free:
+                next_free.extend(_split_free_rect(r, used))
+            free = _prune_contained(next_free)
+        if ok:
+            placements = placed
+            break
+        side *= 1.15
+    return placements
 
 
 def layout_port_graph(
@@ -363,24 +524,59 @@ def layout_port_graph(
 
     comps = _connected_components(n, adj)
     rng = np.random.default_rng(p.seed)
+    # Separate stream for the cosmetic thin-box tilt so it never perturbs the
+    # solver's RNG consumption (which must stay byte-identical, seed for seed).
+    tilt_rng = np.random.default_rng([p.seed, 1])
 
     comp_local: list[tuple[list[int], np.ndarray]] = []
     boxes: list[tuple[float, float]] = []
     for comp in comps:
         pos = _layout_component(comp, adj, p, rng)
-        # normalize to origin
+        # Rigidly reorient to the component's tightest (minimum-area) bounding box,
+        # then flip to landscape so it becomes a flat horizontal bar. Both are rigid
+        # isometries (rotation, then an axis swap = reflection): every pairwise
+        # distance is preserved, so the SGD shape is untouched — only its pose on
+        # the page changes. Flat bars are what the corner packer tiles tightly.
+        angle = _min_area_rotation(pos)
+        if angle != 0.0:
+            c, s = math.cos(-angle), math.sin(-angle)
+            pos = np.stack([pos[:, 0] * c - pos[:, 1] * s, pos[:, 0] * s + pos[:, 1] * c], axis=1)
         pos = pos - pos.min(axis=0)
         w = float(pos[:, 0].max()) if len(pos) else 0.0
         h = float(pos[:, 1].max()) if len(pos) else 0.0
+        if h > w:  # make it landscape (w >= h) by swapping axes
+            pos = pos[:, ::-1].copy()
+            w, h = h, w
+        # Cosmetic tilt for very thin/linear components so a row of them doesn't
+        # read as one long straight line. Still a rigid rotation (SGD shape intact);
+        # it just grows the bbox the packer sees, which stays overlap-free.
+        if h > 1e-9 and w / h >= _THIN_ASPECT:
+            t = (1.0 if tilt_rng.random() < 0.5 else -1.0) * tilt_rng.uniform(_TILT_MIN, _TILT_MAX)
+            c, s = math.cos(-t), math.sin(-t)
+            pos = np.stack([pos[:, 0] * c - pos[:, 1] * s, pos[:, 0] * s + pos[:, 1] * c], axis=1)
+            pos = pos - pos.min(axis=0)
+            w = float(pos[:, 0].max())
+            h = float(pos[:, 1].max())
         comp_local.append((comp, pos))
         boxes.append((w, h))
 
-    offsets = _row_pack(boxes, p.component_pad)
+    # Inter-component gap. Ribbons have real width (up to ~12 world units) and can
+    # bulge past the node bounding box, so a tiny gap lets neighbours' ribbons touch
+    # even though the node boxes don't. Scale the gap to the graph (a fraction of the
+    # largest component) with the fixed pad as a floor.
+    max_dim = max((max(w, h) for w, h in boxes), default=0.0)
+    pad = max(p.component_pad, 0.04 * max_dim)
+    placements = _corner_pack(boxes, pad)
 
     out: dict[str, tuple[float, float]] = {}
-    for (comp, pos), (ox, oy) in zip(comp_local, offsets):
+    for (comp, pos), (ox, oy, _rot) in zip(comp_local, placements):
         for local_i, g in enumerate(comp):
-            x = float(pos[local_i, 0]) + ox
-            y = float(pos[local_i, 1]) + oy
-            out[pg.nodes[g]] = (x, y)
+            out[pg.nodes[g]] = (float(pos[local_i, 0]) + ox, float(pos[local_i, 1]) + oy)
+
+    # Anchor the biggest component (packed at the origin corner) to the *top*-left.
+    # The view has y-up (deck OrthographicView flipY:false), so mirror y about the
+    # page top. A global reflection preserves every distance — solver shape intact.
+    if out:
+        y_max = max(y for _x, y in out.values())
+        out = {nid: (x, y_max - y) for nid, (x, y) in out.items()}
     return out

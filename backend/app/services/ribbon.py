@@ -55,6 +55,8 @@ def build_scene(
     contig_width = np.empty(n, dtype=np.float32)
     contig_color = np.empty(n * 4, dtype=np.uint8)
     id_table: list[str] = []
+    # port node id -> (contig index, side); side 0=IN, 1=OUT.
+    port_ref: dict[str, tuple[int, int]] = {}
 
     for i, (cid, (in_id, out_id)) in enumerate(pg.contigs.items()):
         x0, y0 = positions[in_id]
@@ -64,15 +66,22 @@ def build_scene(
         r, g, b = _PALETTE[comps.node_to_cid[cid] % len(_PALETTE)]
         contig_color[i * 4 : i * 4 + 4] = (r, g, b, 255)
         id_table.append(cid)
+        port_ref[in_id] = (i, 0)
+        port_ref[out_id] = (i, 1)
 
     link_xy: list[float] = []
+    link_ep: list[int] = []
     for e in pg.edges:
         if e.kind != "EXTERNAL":
             continue
         x0, y0 = positions[e.u]
         x1, y1 = positions[e.v]
         link_xy += [x0, y0, x1, y1]
+        ia, sa = port_ref[e.u]
+        ib, sb = port_ref[e.v]
+        link_ep += [ia, sa, ib, sb]
     link_positions = np.asarray(link_xy, dtype=np.float32)
+    link_endpoints = np.asarray(link_ep, dtype=np.uint32)
 
     xs = [p[0] for p in positions.values()]
     ys = [p[1] for p in positions.values()]
@@ -86,4 +95,5 @@ def build_scene(
         link_positions=link_positions,
         id_table=id_table,
         bbox=bbox,
+        link_endpoints=link_endpoints,
     )
