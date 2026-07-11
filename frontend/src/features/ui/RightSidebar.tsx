@@ -214,7 +214,10 @@ export function RightSidebar({ collapsed }: Props) {
           />
         </label>
         <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 10 }}>
-          Force-assisted dragging only (no layout change on load). <b>Ctrl-drag</b> moves just the nearest
+          Force-assisted dragging only (no layout change on load). Grab a vertex near its <b>middle</b>
+          to move it, or near an <b>end</b> to rotate it (that port follows the cursor, the rest reflows);
+          the highlighted zone shows what you'll grab, and the ends are magnetic so they're easy to hit.
+          <b>Ctrl-drag</b> moves just the nearest
           port and pins that connection's rest length to the new gap; <b>Shift-drag</b> box-selects (Shift-click adds);
           drag a <b>selected</b> vertex to move the selection rigidly while its neighbourhood reflows. Plain
           click deselects.

@@ -106,7 +106,8 @@ export function computeBulgeOffsets(
   params: BulgeParams = DEFAULT_BULGE,
 ): Float32Array {
   const c = chordsOf(positions, n);
-  const offset = new Float32Array(n);
+  const offset = new Float32Array(n); // always from zero: this is what lets a contig with no
+                                      // crowding relax straight (the model has no pull-to-zero term)
   if (n === 0) return offset;
 
   const R = Math.max(c.meanLen * params.radiusFactor, 1e-6);
@@ -172,15 +173,73 @@ export function computeBulgeOffsets(
   return offset;
 }
 
-// Local bulge update: recompute the curve-repulsion offset for just the `active` contigs
-// (against each other), leaving every other contig's offset untouched. Used during a
-// force-layout drag so the curves reflow locally without a full O(N) bulge pass. Mutates
-// `offsets` in place.
+// Frozen background of every *non-active* contig, for a local bulge pass. A force-drag only
+// moves the contigs in its k-ring (the `active` set); everyone else holds still for the whole
+// gesture, so we snapshot them once at drag start into a grid of their displaced midpoints.
+// The active contigs then repel against this background as well as each other, which is what
+// makes the mid-drag curvature equal the full pass — so nothing snaps on release. R/push use
+// the WHOLE-graph mean chord, identical to computeBulgeOffsets, so the two agree.
+export type BulgeBackground = {
+  R: number;
+  R2: number;
+  push: number;
+  grid: Grid;
+  bx: Float32Array; // displaced midpoint X of each background contig
+  by: Float32Array;
+  bpx: Float32Array; // unit perpendicular X
+  bpy: Float32Array;
+  idx: Int32Array; // actual contig index (for the deterministic coincident tiebreak)
+};
+
+export function buildBulgeBackground(
+  positions: Float32Array,
+  n: number,
+  activeSet: Set<number>,
+  offsets: Float32Array,
+  params: BulgeParams = DEFAULT_BULGE,
+): BulgeBackground {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = positions[i * 4 + 2] - positions[i * 4];
+    const dy = positions[i * 4 + 3] - positions[i * 4 + 1];
+    sum += Math.hypot(dx, dy) || 1e-6;
+  }
+  const meanLen = n ? sum / n : 1; // whole-graph mean chord → same R as computeBulgeOffsets
+  const R = Math.max(meanLen * params.radiusFactor, 1e-6);
+  const push = params.strength * R;
+  const bCount = Math.max(0, n - activeSet.size);
+  const bx = new Float32Array(bCount), by = new Float32Array(bCount);
+  const bpx = new Float32Array(bCount), bpy = new Float32Array(bCount);
+  const idx = new Int32Array(bCount);
+  const grid = new Grid(R);
+  let w = 0;
+  for (let i = 0; i < n; i++) {
+    if (activeSet.has(i)) continue;
+    const x0 = positions[i * 4], y0 = positions[i * 4 + 1];
+    const x1 = positions[i * 4 + 2], y1 = positions[i * 4 + 3];
+    const dx = x1 - x0, dy = y1 - y0;
+    const l = Math.hypot(dx, dy) || 1e-6;
+    const px = -dy / l, py = dx / l;
+    const o = offsets[i] ?? 0;
+    const mx = (x0 + x1) * 0.5 + o * px, my = (y0 + y1) * 0.5 + o * py;
+    bx[w] = mx; by[w] = my; bpx[w] = px; bpy[w] = py; idx[w] = i;
+    grid.insert(w, mx, my);
+    w++;
+  }
+  return { R, R2: R * R, push, grid, bx, by, bpx, bpy, idx };
+}
+
+// Local bulge update: recompute the curve-repulsion offset for just the `active` contigs (the
+// ones a drag moves), leaving every other contig's offset untouched. They repel against each
+// other AND — when a `bg` is supplied — against the frozen background of stationary contigs,
+// so the mid-drag curvature already matches the full pass and doesn't jump on release. Cost is
+// O(active · iterations), independent of graph size. Mutates `offsets` in place.
 export function localBulgeUpdate(
   offsets: Float32Array,
   positions: Float32Array,
   active: number[],
   params: BulgeParams = DEFAULT_BULGE,
+  bg?: BulgeBackground | null,
 ): void {
   const A = active.length;
   if (A === 0) return;
@@ -198,12 +257,16 @@ export function localBulgeUpdate(
     perpX[a] = -dy / l; perpY[a] = dx / l; len[a] = l; sum += l;
   }
   const meanLen = sum / A;
-  const R = Math.max(meanLen * params.radiusFactor, 1e-6);
-  const R2 = R * R;
-  const push = params.strength * R;
+  const R = bg ? bg.R : Math.max(meanLen * params.radiusFactor, 1e-6);
+  const R2 = bg ? bg.R2 : R * R;
+  const push = bg ? bg.push : params.strength * R;
+  // Start from zero each call (do NOT accumulate the previous frame's offsets): the model has no
+  // pull-to-zero term, so accumulating would (a) never let a contig straighten once its neighbours
+  // leave, and (b) over-converge relative to the from-zero release pass and snap on release. A
+  // fresh 40-iter relaxation here matches computeBulgeOffsets exactly.
   const off = new Float32Array(A);
-  for (let a = 0; a < A; a++) off[a] = offsets[active[a]];
   const neigh: number[] = [];
+  const bneigh: number[] = [];
   for (let it = 0; it < params.iterations; it++) {
     const dxA = new Float32Array(A), dyA = new Float32Array(A);
     const grid = new Grid(R);
@@ -213,8 +276,9 @@ export function localBulgeUpdate(
     }
     const delta = new Float32Array(A);
     for (let a = 0; a < A; a++) {
-      grid.neighbors(dxA[a], dyA[a], neigh);
       let acc = 0;
+      // active <-> active (live)
+      grid.neighbors(dxA[a], dyA[a], neigh);
       for (let m = 0; m < neigh.length; m++) {
         const b = neigh[m];
         if (b === a) continue;
@@ -226,13 +290,35 @@ export function localBulgeUpdate(
         const along = vx * perpY[a] + vy * -perpX[a];
         if (Math.abs(along) > params.overlapFrac * len[a]) continue;
         if (d2 < 1e-9) {
-          acc += push * align * (a > b ? 1 : -1);
+          acc += push * align * (active[a] > active[b] ? 1 : -1);
           continue;
         }
         const d = Math.sqrt(d2);
         const falloff = 1 - d / R;
         const proj = (vx / d) * perpX[a] + (vy / d) * perpY[a];
         acc += push * align * falloff * proj;
+      }
+      // active <-> stationary background (frozen at drag start)
+      if (bg) {
+        bg.grid.neighbors(dxA[a], dyA[a], bneigh);
+        for (let m = 0; m < bneigh.length; m++) {
+          const b = bneigh[m];
+          const vx = dxA[a] - bg.bx[b], vy = dyA[a] - bg.by[b];
+          const d2 = vx * vx + vy * vy;
+          if (d2 >= R2) continue;
+          const align = Math.abs(perpX[a] * bg.bpx[b] + perpY[a] * bg.bpy[b]);
+          if (align < 0.2) continue;
+          const along = vx * perpY[a] + vy * -perpX[a];
+          if (Math.abs(along) > params.overlapFrac * len[a]) continue;
+          if (d2 < 1e-9) {
+            acc += push * align * (active[a] > bg.idx[b] ? 1 : -1);
+            continue;
+          }
+          const d = Math.sqrt(d2);
+          const falloff = 1 - d / R;
+          const proj = (vx / d) * perpX[a] + (vy / d) * perpY[a];
+          acc += push * align * falloff * proj;
+        }
       }
       delta[a] = acc;
     }
@@ -256,6 +342,11 @@ export type Edits = {
 };
 
 export const portKey = (contig: number, side: number): number => contig * 2 + side;
+
+// Grab zones along a vertex's chord: the outer PORT_ZONE_FRAC at each end is a port (rotate)
+// zone, the middle is the central (translate) zone. Shared by the drag hit-test (grabZone in
+// DeckCanvas) and the hover highlight (buildLayers) so they always agree.
+export const PORT_ZONE_FRAC = 1 / 6;
 
 // Final [inX,inY,outX,outY] per contig after applying port drags. This single source of
 // truth is used for BOTH the ribbon curves and the link geometry, so links always stay

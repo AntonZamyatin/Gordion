@@ -3,14 +3,17 @@ import { DeckGL } from "@deck.gl/react";
 import { OrthographicView } from "@deck.gl/core";
 
 import { useGraphStore } from "../../store/useGraphStore";
-import { buildLayers } from "./layers";
+import { buildLayers, type HoverZone } from "./layers";
 import {
   computeBulgeOffsets,
   localBulgeUpdate,
+  buildBulgeBackground,
   buildRibbonPaths,
   buildLinkPositions,
   effectivePorts,
   portKey,
+  PORT_ZONE_FRAC,
+  type BulgeBackground,
 } from "./ribbonGeometry";
 import {
   buildPortGraph,
@@ -21,6 +24,10 @@ import {
 } from "./forceLayout";
 
 const VIEW = new OrthographicView({ flipY: false });
+
+// Magnetic capture radius around each port endpoint, as a fraction of the vertex's chord
+// length. Larger = port (rotate) zones grab from further away; the central zone shrinks.
+const PORT_MAGNET = 0.22;
 
 type DeckPickInfo = {
   index: number;
@@ -71,10 +78,13 @@ export function DeckCanvas() {
         work: Float32Array;
         pinnedBase: Map<number, [number, number]>;
         moved: number[];
+        bg: BulgeBackground; // stationary contigs frozen at drag start (see localBulgeUpdate)
       }
     | null
   >(null);
   const [nodeDragging, setNodeDragging] = useState(false);
+  // Which grab zone the cursor is over (for the hover colour cue). Only tracked with forces on.
+  const [hoverZone, setHoverZone] = useState<HoverZone | null>(null);
 
   // Rubber-band selection is handled on an overlay div (deck's controller swallows background
   // drags, so we can't rely on its onDrag for this). deckRef gives us box picking.
@@ -155,9 +165,9 @@ export function DeckCanvas() {
   const layers = useMemo(
     () =>
       scene && paths
-        ? buildLayers(scene, paths, linkPositions, hoveredIndex, selected, selectionTick)
+        ? buildLayers(scene, paths, linkPositions, hoveredIndex, selected, selectionTick, hoverZone)
         : [],
-    [scene, paths, linkPositions, hoveredIndex, selected, selectionTick],
+    [scene, paths, linkPositions, hoveredIndex, selected, selectionTick, hoverZone],
   );
 
   // +/- bends the focused contig's curvature (hovered, else the lone selection).
@@ -181,6 +191,26 @@ export function DeckCanvas() {
     const dIn = (ports[i * 4] - cx) ** 2 + (ports[i * 4 + 1] - cy) ** 2;
     const dOut = (ports[i * 4 + 2] - cx) ** 2 + (ports[i * 4 + 3] - cy) ** 2;
     return dOut < dIn ? 1 : 0;
+  };
+
+  // Which grab zone of contig i the point (cx,cy) falls in: 0 = IN port, 1 = central, 2 = OUT
+  // port. The outer PORT_ZONE_FRAC of the chord at each end is a port (rotate) zone; the middle
+  // translates. Ports are also "magnetic": a disk of radius PORT_MAGNET×chord around each
+  // endpoint captures its zone even when the cursor is off to the side, past the end, or the
+  // chord projection would land in the middle — making the small port zones easy to hit.
+  const grabZone = (i: number, cx: number, cy: number): 0 | 1 | 2 => {
+    const ax = ports[i * 4], ay = ports[i * 4 + 1];
+    const bx = ports[i * 4 + 2], by = ports[i * 4 + 3];
+    const ex = bx - ax, ey = by - ay;
+    const len2 = ex * ex + ey * ey || 1e-12;
+    const dIn2 = (cx - ax) ** 2 + (cy - ay) ** 2;
+    const dOut2 = (cx - bx) ** 2 + (cy - by) ** 2;
+    const magnet2 = PORT_MAGNET * PORT_MAGNET * len2;
+    if (dIn2 < magnet2 || dOut2 < magnet2) return dIn2 <= dOut2 ? 0 : 2; // magnetic port capture
+    const t = ((cx - ax) * ex + (cy - ay) * ey) / len2; // 0 at IN, 1 at OUT
+    if (t < PORT_ZONE_FRAC) return 0;
+    if (t > 1 - PORT_ZONE_FRAC) return 2;
+    return 1;
   };
 
   // --- rubber-band overlay handlers (pixel coords relative to the wrapper) ---
@@ -257,7 +287,20 @@ export function DeckCanvas() {
         getCursor={({ isDragging, isHovering }) =>
           nodeDragging || isDragging ? "grabbing" : isHovering ? "pointer" : "grab"
         }
-        onHover={(info) => setHovered(onRibbon(info as DeckPickInfo))}
+        pickingRadius={10} // magnetic cursor: pick a ribbon/port even on a near-miss (thin ribbons)
+        onHover={(info) => {
+          const pick = info as DeckPickInfo;
+          const i = onRibbon(pick);
+          setHovered(i);
+          // Colour the zone a plain drag would grab — only meaningful with forces on and not
+          // mid-drag. Bail to null otherwise. Skip the state write when nothing changed.
+          if (i != null && pick.coordinate && force.enabled && !nodeDragging) {
+            const zone = grabZone(i, pick.coordinate[0], pick.coordinate[1]);
+            setHoverZone((prev) => (prev && prev.contig === i && prev.zone === zone ? prev : { contig: i, zone }));
+          } else {
+            setHoverZone((prev) => (prev === null ? prev : null));
+          }
+        }}
         onClick={(info) => {
           const pick = info as DeckPickInfo;
           // Plain click deselects (shift interactions are handled by the overlay).
@@ -290,25 +333,45 @@ export function DeckCanvas() {
             return;
           }
 
-          // Plain drag (forces on): neighbourhood drag. Pin the whole grabbed vertex — or the
-          // whole selection if it's part of one — to the cursor, relax the k-hop neighbourhood.
+          // Plain drag (forces on): neighbourhood drag. Three grab zones along a lone vertex —
+          // the middle third pins the whole vertex and translates it (as does a multi-selection,
+          // which moves as a whole); an end third pins ONLY that port to the cursor and leaves
+          // the vertex in the relaxing region, so the far port + neighbours settle by the force
+          // model (rigid rod preserves length) → the vertex rotates to follow the grabbed port.
           if (useForces) {
-            const seeds = selected.has(i) && selected.size > 0 ? [...selected] : [i];
-            const region = bfsWithin(portGraph!, seeds, Math.max(1, Math.round(force.dragLayers)));
-            for (const c of seeds) region.delete(c);
-            const sim = buildLocalSim(portGraph!, region);
+            const k = Math.max(1, Math.round(force.dragLayers));
+            const inSelection = selected.has(i) && selected.size > 0;
+            const zone = inSelection ? 1 : grabZone(i, cx, cy); // selection ⇒ translate as a whole
+            const rotate = !inSelection && zone !== 1;
+
+            const seeds = inSelection ? [...selected] : [i];
+            const region = bfsWithin(portGraph!, seeds, k);
             const pinnedBase = new Map<number, [number, number]>();
-            for (const c of seeds) {
-              pinnedBase.set(c * 2, [base[c * 4], base[c * 4 + 1]]);
-              pinnedBase.set(c * 2 + 1, [base[c * 4 + 2], base[c * 4 + 3]]);
+            if (rotate) {
+              // pin the grabbed port only; keep the vertex (i) in `region` so its far port relaxes
+              const side = zone === 0 ? 0 : 1;
+              const off = i * 4 + side * 2;
+              pinnedBase.set(i * 2 + side, [base[off], base[off + 1]]);
+            } else {
+              // pin the whole grabbed vertex(es); they translate rigidly and don't relax
+              for (const c of seeds) {
+                region.delete(c);
+                pinnedBase.set(c * 2, [base[c * 4], base[c * 4 + 1]]);
+                pinnedBase.set(c * 2 + 1, [base[c * 4 + 2], base[c * 4 + 3]]);
+              }
             }
+            const sim = buildLocalSim(portGraph!, region);
+            const moved = [...new Set([...region, ...seeds])]; // every contig that can move (bulge set)
+            // Freeze the stationary contigs once so the moved set can bulge against them live.
+            const bg = buildBulgeBackground(base, scene.contigCount, new Set(moved), offsetsRef.current, bulge);
             drag.current = {
               mode: "cloud",
               anchor: pick.coordinate,
               sim,
               work: new Float32Array(base),
               pinnedBase,
-              moved: [...region, ...seeds],
+              moved,
+              bg,
             };
             setNodeDragging(true);
             return;
@@ -347,7 +410,7 @@ export function DeckCanvas() {
             Math.max(1, Math.round(force.iterations)),
             linkRestOverrides,
           );
-          localBulgeUpdate(offsetsRef.current, d.work, d.moved, bulge);
+          localBulgeUpdate(offsetsRef.current, d.work, d.moved, bulge, d.bg);
           setOffsetsVersion((v) => v + 1);
           setLivePositions(d.work.slice());
         }}

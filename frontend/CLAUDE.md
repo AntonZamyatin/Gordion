@@ -39,10 +39,18 @@ App mounts → useGraphStore.loadGraph(name)
   route to the store only when `info.layer?.id === 'ribbons'`. The `base` the ribbon geometry builds on
   is `livePositions ?? scene.contigPositions` (forces never touch the load-time layout). **Drag modes**,
   chosen by modifier in `onDragStart` (all force modes need `force.enabled`): **plain** = neighbourhood
-  force drag — pin the whole grabbed vertex (or the whole selection, if the grabbed contig is in one) to
-  the cursor and relax its k-hop neighbourhood (`bfsWithin(seeds, dragLayers)`); **Ctrl** = move ONLY the
-  nearest port via `movePort` — no forces, no neighbourhood, so the contig reshapes/resizes as its port
-  follows the cursor (works regardless of the force master switch); **Shift** = rubber-band box select.
+  force drag with three grab zones along a lone vertex (`grabZone`: the outer `PORT_ZONE_FRAC` (1/6) of the
+  chord at each end is a port zone, the middle 4/6 is central; ports are also **magnetic** — a disk of
+  radius `PORT_MAGNET`×chord around each endpoint captures its zone even off to the side / past the end /
+  when the projection is mid-chord, and `pickingRadius` lets a near-miss on a thin ribbon still register):
+  the **central zone translates** — pin the whole grabbed vertex and relax its k-hop neighbourhood
+  (`bfsWithin(seeds, dragLayers)`); a **port zone rotates** — pin ONLY that port to the cursor and keep
+  the vertex *in* the relaxing region, so its far port + neighbours settle by the force model (the rigid
+  rod preserves length) and the vertex swings to follow the grabbed port. On hover, a non-pickable
+  `zone-highlight` PathLayer paints the sub-segment of that zone (light yellow). A
+  **multi-selection** ignores zones and translates as a whole (pin every selected vertex). **Ctrl** = move ONLY the nearest port via
+  `movePort` — no forces, no neighbourhood, so the contig reshapes/resizes as its port follows the cursor
+  (works regardless of the force master switch); **Shift** = rubber-band box select.
   Force drags call `relaxLocal` + `localBulgeUpdate` per event and publish `livePositions`; when forces are
   off, plain drag also falls back to a single-port `movePort`. A plain click deselects. **Shift selection is
   handled entirely on a separate overlay `<div>`, NOT via deck's drag events** (deck's controller
@@ -71,7 +79,10 @@ App mounts → useGraphStore.loadGraph(name)
   map (portKey → position): those ports are held (a dragged port, or every port of a rigidly-moved
   selection); every other region port relaxes; contigs outside the region are fixed anchors. The curve
   repulsion is localised the same way (`localBulgeUpdate` in ribbonGeometry recomputes offsets for just
-  the moved contigs; a full `computeBulgeOffsets` runs only on drag *release*). Output is the same
+  the moved contigs, but repels them against a `buildBulgeBackground` grid of every *non-dragged* contig
+  frozen at drag start — same whole-graph R as the full pass — so the mid-drag curvature already matches
+  the full pass and doesn't snap on release; a full `computeBulgeOffsets` still runs on drag *release*).
+  Output is the same
   `[inX,inY,outX,outY]`-per-contig buffer as the SGD seed, so it drops into `effectivePorts(scene,
   edits, base)` as the `base`. **Nothing is sent to the backend — render-time only, protected SGD solver
   untouched.** Params + master on/off live in the store as `force` (`ForceParams`), tuned from the
